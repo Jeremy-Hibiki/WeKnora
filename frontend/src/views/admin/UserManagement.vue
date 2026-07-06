@@ -52,7 +52,10 @@
     >
       <template #username="{ row }">
         <div class="user-cell">
-          <t-avatar size="32px">{{ avatarLetter(row.username) }}</t-avatar>
+          <div class="user-avatar">
+            <img v-if="row.avatar" :src="row.avatar" :alt="row.username" />
+            <span v-else class="avatar-placeholder">{{ avatarLetter(row.username) }}</span>
+          </div>
           <div class="user-cell-info">
             <span class="user-cell-name">{{ row.username }}</span>
             <span v-if="row.email" class="user-cell-email">{{ row.email }}</span>
@@ -113,6 +116,7 @@
     <t-dialog
       v-model:visible="createVisible"
       :header="t('userManagement.createDialog.title')"
+      width="480px"
       :confirm-btn="{ content: t('userManagement.createDialog.confirm'), loading: createBusy }"
       :cancel-btn="t('userManagement.createDialog.cancel')"
       :close-on-esc-keydown="false"
@@ -121,15 +125,25 @@
     >
       <t-form :data="createForm" :rules="createRules" ref="createFormRef" label-align="top">
         <t-form-item :label="t('userManagement.createDialog.username')" name="username">
-          <t-input v-model="createForm.username" :placeholder="t('userManagement.createDialog.usernamePlaceholder')" />
+          <t-input
+            v-model="createForm.username"
+            clearable
+            autofocus
+            :placeholder="t('userManagement.createDialog.usernamePlaceholder')"
+          />
         </t-form-item>
         <t-form-item :label="t('userManagement.createDialog.email')" name="email">
-          <t-input v-model="createForm.email" :placeholder="t('userManagement.createDialog.emailPlaceholder')" />
+          <t-input
+            v-model="createForm.email"
+            clearable
+            :placeholder="t('userManagement.createDialog.emailPlaceholder')"
+          />
         </t-form-item>
         <t-form-item :label="t('userManagement.createDialog.password')" name="password">
           <t-input
             v-model="createForm.password"
             type="password"
+            clearable
             :placeholder="t('userManagement.createDialog.passwordPlaceholder')"
           />
         </t-form-item>
@@ -208,8 +222,9 @@ const pagination = ref({
 })
 
 const columns = computed<PrimaryTableCol<AdminUser>[]>(() => [
-  { colKey: 'username', title: t('userManagement.colUser'), width: 260 },
-  { colKey: 'status', title: t('userManagement.colStatus'), width: 180 },
+  { colKey: 'username', title: t('userManagement.colUser'), width: 220 },
+  { colKey: 'email', title: t('userManagement.colEmail'), width: 240, ellipsis: true },
+  { colKey: 'status', title: t('userManagement.colStatus'), width: 160 },
   { colKey: 'created_at', title: t('userManagement.colCreatedAt'), width: 180 },
   { colKey: 'op', title: t('userManagement.colActions'), width: 140, align: 'left', fixed: 'right' },
 ])
@@ -445,6 +460,31 @@ onMounted(() => {
   display: flex;
   align-items: center;
   gap: 10px;
+}
+
+/* Avatar — mirrors .user-avatar / .avatar-placeholder in UserMenu.vue
+ * so the management list looks identical to the sidebar user chip. */
+.user-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--td-brand-color);
+  img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  .avatar-placeholder {
+    color: var(--td-text-color-anti);
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1;
+  }
 }
 
 .user-cell-info {

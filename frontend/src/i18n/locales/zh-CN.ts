@@ -2423,6 +2423,7 @@ export default {
     statusDisabled: "已停用",
     roleSystemAdmin: "系统管理员",
     colUser: "用户",
+    colEmail: "邮箱",
     colStatus: "状态",
     colCreatedAt: "创建时间",
     colActions: "操作",

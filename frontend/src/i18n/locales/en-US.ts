@@ -3435,6 +3435,7 @@ export default {
     statusDisabled: 'Disabled',
     roleSystemAdmin: 'System Admin',
     colUser: 'User',
+    colEmail: 'Email',
     colStatus: 'Status',
     colCreatedAt: 'Created',
     colActions: 'Actions',

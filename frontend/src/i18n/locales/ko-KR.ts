@@ -2420,6 +2420,7 @@ export default {
     statusDisabled: "비활성화됨",
     roleSystemAdmin: "시스템 관리자",
     colUser: "사용자",
+    colEmail: "이메일",
     colStatus: "상태",
     colCreatedAt: "생성 시간",
     colActions: "작업",

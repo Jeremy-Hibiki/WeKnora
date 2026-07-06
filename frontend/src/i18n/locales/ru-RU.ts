@@ -2118,6 +2118,7 @@ export default {
     statusDisabled: 'Отключён',
     roleSystemAdmin: 'Системный администратор',
     colUser: 'Пользователь',
+    colEmail: 'Email',
     colStatus: 'Статус',
     colCreatedAt: 'Создан',
     colActions: 'Действия',
