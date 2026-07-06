@@ -616,6 +616,9 @@ const isTagFilterActive = (tagId: string) => selectedTagIds.value.includes(tagId
 // 标签编辑弹窗
 const tagEditDialogVisible = ref(false);
 const tagEditTarget = ref<KnowledgeCard | null>(null);
+const batchTagDialogVisible = ref(false);
+const batchTagLoading = ref(false);
+const batchTagInitialTags = ref<Array<{ id: string; name: string; color?: string }>>([]);
 
 function openTagEditDialog(item: KnowledgeCard) {
   tagEditTarget.value = item;
@@ -625,6 +628,56 @@ function openTagEditDialog(item: KnowledgeCard) {
 function onTagEditConfirm(tagIds: string[]) {
   if (tagEditTarget.value) {
     handleKnowledgeTagChange(tagEditTarget.value.id, tagIds);
+  }
+}
+
+function openBatchTagDialog() {
+  // 计算所有选中文档的标签交集
+  const selectedCards = cardList.value.filter((c: KnowledgeCard) => selectedIds.value.has(c.id));
+  if (selectedCards.length === 0) return;
+  let commonTags: Array<{ id: string; name: string; color?: string }> | null = null;
+  for (const card of selectedCards) {
+    const cardTags = card.tags || [];
+    if (commonTags === null) {
+      commonTags = [...cardTags];
+    } else {
+      const commonMap = new Map(commonTags.map((t) => [t.id, t]));
+      const cardTagIds = new Set(cardTags.map((t) => t.id));
+      for (const t of commonTags) {
+        if (!cardTagIds.has(t.id)) commonMap.delete(t.id);
+      }
+      commonTags = Array.from(commonMap.values());
+    }
+  }
+  batchTagInitialTags.value = commonTags || [];
+  batchTagDialogVisible.value = true;
+}
+
+async function confirmBatchTag(tagIds: string[]) {
+  if (batchTagLoading.value || selectedIds.value.size === 0) return;
+  batchTagLoading.value = true;
+  try {
+    const ids = Array.from(selectedIds.value);
+    // 追加模式：保留各文档原有标签，合并本次选择的标签
+    const updates: Record<string, string[]> = {};
+    for (const id of ids) {
+      const card = cardList.value.find((c: KnowledgeCard) => c.id === id);
+      const existingTagIds = (card?.tags || []).map((t: any) => t.id);
+      // 合并去重：先保留原有标签，再追加新选的
+      const merged = new Set([...existingTagIds, ...tagIds]);
+      updates[id] = Array.from(merged);
+    }
+    await updateKnowledgeTagBatch({ updates });
+    MessagePlugin.success(t('knowledgeBase.tagUpdateSuccess'));
+    batchTagDialogVisible.value = false;
+    clearSelection();
+    batchMode.value = false;
+    loadKnowledgeFiles(kbId.value);
+    loadTags(kbId.value, true);
+  } catch (error: any) {
+    MessagePlugin.error(error?.message || t('common.operationFailed'));
+  } finally {
+    batchTagLoading.value = false;
   }
 }
 const getPageSize = () => {
@@ -2282,8 +2335,10 @@ async function createNewSession(value: string): Promise<void> {
               </div>
               <div class="doc-batch-bar-anchor" v-show="batchMode || selectedIds.size > 0">
                 <DocumentBatchBar :count="selectedIds.size" :delete-loading="batchDeleting"
-                  :reparse-loading="batchReparsing" :visible="batchMode || selectedIds.size > 0"
-                  @cancel="handleBatchCancel" @delete="confirmBatchDelete" @reparse="confirmBatchReparse" />
+                  :reparse-loading="batchReparsing" :batch-tag-loading="batchTagLoading"
+                  :visible="batchMode || selectedIds.size > 0"
+                  @cancel="handleBatchCancel" @delete="confirmBatchDelete" @reparse="confirmBatchReparse"
+                  @batch-tag="openBatchTagDialog" />
               </div>
             </div>
           </div>
@@ -2314,6 +2369,13 @@ async function createNewSession(value: string): Promise<void> {
     :knowledge-name="tagEditTarget?.display_name || tagEditTarget?.file_name || tagEditTarget?.title || ''"
     :kb-id="kbId" :tag-list="tagList" :selected-tags="tagEditTarget?.tags || []" :can-manage="canEdit"
     @update:visible="tagEditDialogVisible = $event" @confirm="onTagEditConfirm" @tag-created="loadTags(kbId, true)"
+    @open-manage="openTagManageFromEditDialog" />
+
+  <!-- 批量改标签弹窗 -->
+  <TagEditDialog :visible="batchTagDialogVisible"
+    :knowledge-name="$t('knowledgeBase.selectedCount', { count: selectedIds.size })"
+    :kb-id="kbId" :tag-list="tagList" :selected-tags="batchTagInitialTags" :can-manage="canEdit" batch-mode
+    @update:visible="batchTagDialogVisible = $event" @confirm="confirmBatchTag" @tag-created="loadTags(kbId, true)"
     @open-manage="openTagManageFromEditDialog" />
 
   <KbTagManageDrawer
