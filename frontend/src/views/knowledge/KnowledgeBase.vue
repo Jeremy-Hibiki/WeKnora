@@ -1437,14 +1437,16 @@ const showUploadResultMessages = (
 
 const executeUploadBatch = async (
   files: File[],
-  options: { processConfig?: KnowledgeProcessOverrides } = {},
+  options: { processConfig?: KnowledgeProcessOverrides; tagIds?: string[] } = {},
 ) => {
   const targetKbId = kbId.value;
   if (!targetKbId || files.length === 0) {
     return { successCount: 0, failCount: files.length };
   }
 
-  const tagIdsToUpload = selectedTagIds.value.length > 0 ? [...selectedTagIds.value] : undefined;
+  const tagIdsToUpload = options.tagIds?.length
+    ? options.tagIds
+    : (selectedTagIds.value.length > 0 ? [...selectedTagIds.value] : undefined);
   let successCount = 0;
   let failCount = 0;
   const totalCount = files.length;
@@ -1509,14 +1511,16 @@ const executeUploadBatch = async (
   return { successCount, failCount };
 };
 
-const executeUrlImport = async (url: string, processConfig?: KnowledgeProcessOverrides) => {
+const executeUrlImport = async (url: string, processConfig?: KnowledgeProcessOverrides, tagIds?: string[]) => {
   const targetKbId = kbId.value;
   if (!targetKbId) {
     MessagePlugin.error(t('error.missingKbId'));
     return;
   }
 
-  const tagIdsToUpload = selectedTagIds.value.length > 0 ? [...selectedTagIds.value] : undefined;
+  const tagIdsToUpload = tagIds?.length
+    ? tagIds
+    : (selectedTagIds.value.length > 0 ? [...selectedTagIds.value] : undefined);
   try {
     const responseData: any = await createKnowledgeFromURL(targetKbId, {
       url,
@@ -1558,6 +1562,7 @@ const handleUploadConfirmResult = async (result: UploadConfirmResult) => {
   const files = result.files || [];
   const urls = result.urls || [];
   const processConfig = result.processConfig;
+  const tagIds = result.tagIds;
 
   if (files.length > 0) {
     const hasFolderPaths = files.some((file) => {
@@ -1567,11 +1572,11 @@ const handleUploadConfirmResult = async (result: UploadConfirmResult) => {
     if (hasFolderPaths) {
       MessagePlugin.info(t('knowledgeBase.uploadingFolder', { total: files.length }));
     }
-    await executeUploadBatch(files, { processConfig });
+    await executeUploadBatch(files, { processConfig, tagIds });
   }
 
   for (const url of urls) {
-    await executeUrlImport(url, processConfig);
+    await executeUrlImport(url, processConfig, tagIds);
   }
 };
 

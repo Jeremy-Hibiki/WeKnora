@@ -21,6 +21,7 @@ export interface UploadConfirmReparseSource {
 export interface UploadConfirmResult {
   processConfig: KnowledgeProcessOverrides
   mode: UploadConfirmMode
+  tagIds?: string[]
   files?: File[]
   urls?: string[]
   manual?: UploadConfirmManualSource

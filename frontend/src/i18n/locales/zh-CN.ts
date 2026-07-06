@@ -758,6 +758,10 @@ export default {
     confirmReparse: "确认并重新解析",
     reparseSource: "待重新解析文档",
     reparseHint: "将沿用上次解析的配置，可在此调整",
+    tabTags: "标签",
+    tagsNone: "未选择",
+    tagsSelect: "选择标签",
+    tagSearch: "搜索标签",
     urlSource: "导入来源",
     manualSource: "待发布文档",
     editUrl: "修改 URL",
@@ -1096,7 +1100,7 @@ export default {
     roleDenied: {
       title: "权限不足",
       desc: "你当前的角色无权访问此设置项。请联系本空间的管理员获取所需角色。",
-    },    weknoraCloud: {
+    }, weknoraCloud: {
       title: "WeKnora Cloud",
       description: "配置 WeKnora Cloud 的 APPID 和 APPSECRET 凭证。凭证用于模型服务和文档解析引擎。",
       viewDocs: "查看文档",
@@ -3097,12 +3101,12 @@ export default {
           description: "DeepSeek-R1、DeepSeek-V3、lke-reranker-base 等",
         },
         nvidia: {
-            label: "NVIDIA",
-            description: "deepseek-ai-deepseek-v3_1, nv-embed-v1, rerank-qa-mistral-4b, etc.",
+          label: "NVIDIA",
+          description: "deepseek-ai-deepseek-v3_1, nv-embed-v1, rerank-qa-mistral-4b, etc.",
         },
         novita: {
-            label: "Novita AI",
-            description: "moonshotai/kimi-k2.5, zai-org/glm-5, minimax/minimax-m2.7, qwen/qwen3-embedding-0.6b 等",
+          label: "Novita AI",
+          description: "moonshotai/kimi-k2.5, zai-org/glm-5, minimax/minimax-m2.7, qwen/qwen3-embedding-0.6b 等",
         },
       },
     },
@@ -5839,7 +5843,7 @@ export default {
     untitled: "无标题",
     resourceLoadFailed: "加载资源列表失败",
     noResources: "未找到可同步的知识库空间",
-	noResourcesDesc: "应用需要通过群聊获得知识库访问权限才能拉取内容",
+    noResourcesDesc: "应用需要通过群聊获得知识库访问权限才能拉取内容",
     noResourcesDesc_notion: "应用需要获得 Notion 页面的访问权限才能拉取内容",
     retryLoadResources: "重新加载",
     guideStep1: "在飞书中创建一个群聊，在群设置「群机器人」中添加你的应用",

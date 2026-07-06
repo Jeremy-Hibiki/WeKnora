@@ -231,6 +231,63 @@
                       @update:graphExtract="handleNodeExtractUpdate"
                     />
                   </div>
+                  <div v-show="activeSection === 'tags'" class="section">
+                    <div class="upload-tags-section">
+                      <div class="upload-tags-heading">
+                        <h4>{{ t('uploadConfirm.tagsSelect') }}</h4>
+                      </div>
+                      <div v-if="selectedTagIds.size > 0" class="upload-tags-selected">
+                        <button
+                          v-for="tag in allTags"
+                          v-show="isTagSelected(tag.id)"
+                          :key="tag.id"
+                          type="button"
+                          class="upload-tag-chip is-selected"
+                          :title="tag.name"
+                          @click="toggleTag(tag.id)"
+                        >
+                          {{ tag.name }}
+                        </button>
+                      </div>
+                      <div class="upload-tags-search">
+                        <t-input
+                          v-model="tagSearchQuery"
+                          :placeholder="t('uploadConfirm.tagSearch')"
+                          clearable
+                          size="small"
+                        >
+                          <template #prefix-icon>
+                            <t-icon name="search" size="14px" />
+                          </template>
+                        </t-input>
+                      </div>
+                      <div v-if="availableTags.length > 0" class="upload-tags-available">
+                        <button
+                          v-for="tag in availableTags"
+                          :key="tag.id"
+                          type="button"
+                          class="upload-tag-chip"
+                          :title="tag.name"
+                          @click="toggleTag(tag.id)"
+                        >
+                          {{ tag.name }}
+                        </button>
+                      </div>
+                      <div v-else class="upload-tags-empty">
+                        <span>{{ tagSearchQuery.trim() ? t('knowledgeBase.tagEmptyResult') : t('knowledgeBase.noTags') }}</span>
+                        <t-button
+                          v-if="tagSearchQuery.trim()"
+                          variant="text"
+                          theme="default"
+                          size="small"
+                          :loading="creatingTag"
+                          @click="handleCreateTag"
+                        >
+                          {{ t('knowledgeBase.tagCreateAction') }} "{{ tagSearchQuery.trim() }}"
+                        </t-button>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
             </main>
@@ -263,6 +320,7 @@ import { useChatResourcesStore } from '@/stores/chatResources'
 import { useUIStore } from '@/stores/ui'
 import { formatFileSize, getFileIcon } from '@/utils/files'
 import { getUploadFileKey } from '../utils/uploadSources'
+import { listKnowledgeTags, createKnowledgeBaseTag } from '@/api/knowledge-base'
 import KbUploadSourceDropdown from './KbUploadSourceDropdown.vue'
 import type { KnowledgeProcessOverrides } from '@/types/knowledgeProcess'
 import type {
@@ -342,6 +400,13 @@ const localFiles = ref<File[]>([])
 const localUrls = ref<string[]>([])
 const activeSection = ref('overview')
 const uiState = ref<UploadUIState>(createDefaultUIState())
+
+// Tag selection state
+const allTags = ref<Array<{ id: string; name: string }>>([])
+const selectedTagIds = ref<Set<string>>(new Set())
+const tagSearchQuery = ref('')
+const newTagInput = ref('')
+const creatingTag = ref(false)
 
 const dialogVisible = computed({
   get: () => props.visible,
@@ -534,6 +599,13 @@ const overviewLines = computed(() => {
           : t('uploadConfirm.statusOn'))
         : t('uploadConfirm.statusOff'),
     },
+    {
+      key: 'tags',
+      title: t('uploadConfirm.tabTags'),
+      value: selectedTagIds.value.size
+        ? t('knowledgeBase.tagSelectedCount', { count: selectedTagIds.value.size })
+        : t('uploadConfirm.tagsNone'),
+    },
   ]
 })
 
@@ -544,6 +616,7 @@ const sectionMeta: Record<string, { titleKey: string; descKey?: string }> = {
   asr: { titleKey: 'uploadConfirm.tabAsr', descKey: 'knowledgeEditor.asr.description' },
   question: { titleKey: 'uploadConfirm.tabQuestion', descKey: 'knowledgeEditor.advanced.questionGeneration.description' },
   graph: { titleKey: 'uploadConfirm.tabGraph', descKey: 'graphSettings.description' },
+  tags: { titleKey: 'uploadConfirm.tabTags' },
 }
 
 const currentSectionTitle = computed(() => {
@@ -824,6 +897,63 @@ async function loadModels() {
   }
 }
 
+async function loadTags() {
+  if (!props.kbInfo?.id) return
+  try {
+    const res: any = await listKnowledgeTags(props.kbInfo.id, { page: 1, page_size: 200 })
+    const pageData = (res?.data || {})
+    const tags = (pageData?.data || []).map((tag: any) => ({
+      id: String(tag.id),
+      name: tag.name,
+    }))
+    allTags.value = tags
+  } catch {
+    allTags.value = []
+  }
+}
+
+function toggleTag(tagId: string) {
+  const next = new Set(selectedTagIds.value)
+  if (next.has(tagId)) {
+    next.delete(tagId)
+  } else {
+    next.add(tagId)
+  }
+  selectedTagIds.value = next
+}
+
+function isTagSelected(tagId: string) {
+  return selectedTagIds.value.has(tagId)
+}
+
+const availableTags = computed(() => {
+  const query = tagSearchQuery.value.trim().toLowerCase()
+  return allTags.value.filter((tag) => {
+    if (selectedTagIds.value.has(tag.id)) return false
+    if (query && !tag.name.toLowerCase().includes(query)) return false
+    return true
+  })
+})
+
+async function handleCreateTag() {
+  if (!props.kbInfo?.id) return
+  const name = tagSearchQuery.value.trim()
+  if (!name) return
+  creatingTag.value = true
+  try {
+    const res: any = await createKnowledgeBaseTag(props.kbInfo.id, { name })
+    const newTag = res?.data || res
+    allTags.value.push({ id: String(newTag.id), name: newTag.name })
+    selectedTagIds.value.add(String(newTag.id))
+    tagSearchQuery.value = ''
+    MessagePlugin.success(t('knowledgeBase.tagCreateSuccess'))
+  } catch (error: any) {
+    MessagePlugin.error(error?.message || t('common.operationFailed'))
+  } finally {
+    creatingTag.value = false
+  }
+}
+
 watch(
   () => props.visible,
   (visible) => {
@@ -835,7 +965,10 @@ watch(
       applyOverridesToState(props.reparsePreview?.processOverrides)
     }
     activeSection.value = 'overview'
+    selectedTagIds.value = new Set()
+    tagSearchQuery.value = ''
     loadModels()
+    loadTags()
   },
 )
 
@@ -947,14 +1080,16 @@ const handleConfirm = () => {
   if (!validateBeforeConfirm()) return
 
   const processConfig = buildProcessOverrides()
+  const tagIds = selectedTagIds.value.size > 0 ? [...selectedTagIds.value] : undefined
   if (props.mode === 'manual' && props.manualPreview) {
-    emit('confirm', { processConfig, mode: 'manual', manual: { ...props.manualPreview } })
+    emit('confirm', { processConfig, mode: 'manual', tagIds, manual: { ...props.manualPreview } })
   } else if (props.mode === 'reparse' && props.reparsePreview) {
-    emit('confirm', { processConfig, mode: 'reparse', reparse: { ...props.reparsePreview } })
+    emit('confirm', { processConfig, mode: 'reparse', tagIds, reparse: { ...props.reparsePreview } })
   } else {
     emit('confirm', {
       processConfig,
       mode: 'file',
+      tagIds,
       files: [...localFiles.value],
       urls: [...localUrls.value],
     })
@@ -1360,5 +1495,64 @@ const handleConfirm = () => {
 .modal-enter-from,
 .modal-leave-to {
   opacity: 0;
+}
+
+.upload-tags-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.upload-tags-heading {
+  h4 {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--td-text-color-primary);
+  }
+}
+
+.upload-tags-selected,
+.upload-tags-available {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.upload-tag-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 12px;
+  border: 1px solid var(--td-component-stroke);
+  border-radius: 4px;
+  background: var(--td-bg-color-container);
+  font-size: 13px;
+  color: var(--td-text-color-primary);
+  cursor: pointer;
+  transition: all 0.18s ease;
+
+  &:hover {
+    border-color: var(--td-brand-color);
+    color: var(--td-brand-color);
+  }
+
+  &.is-selected {
+    border-color: var(--td-brand-color);
+    background: var(--td-brand-color-1);
+    color: var(--td-brand-color);
+  }
+}
+
+.upload-tags-search {
+  max-width: 320px;
+}
+
+.upload-tags-empty {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  font-size: 13px;
+  color: var(--td-text-color-placeholder);
 }
 </style>
