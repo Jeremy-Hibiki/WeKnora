@@ -677,6 +677,7 @@ export default {
     summaryQuestionCountValue: '{count}',
     summaryGraphTags: 'Типы связей',
     summaryGraphTagsValue: '{count}',
+    summaryTagCountValue: '{count}',
     navChunkingSummary: 'Чанк {size}',
     statusOn: 'Вкл.',
     statusOff: 'Выкл.',

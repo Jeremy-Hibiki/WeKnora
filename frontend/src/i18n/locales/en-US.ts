@@ -710,6 +710,7 @@ export default {
     summaryQuestionCountValue: '{count}',
     summaryGraphTags: 'Relation types',
     summaryGraphTagsValue: '{count}',
+    summaryTagCountValue: '{count}',
     navChunkingSummary: 'Chunk {size}',
     statusOn: 'On',
     statusOff: 'Off',

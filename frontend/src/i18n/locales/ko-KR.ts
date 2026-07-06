@@ -713,6 +713,7 @@ export default {
     summaryQuestionCountValue: "{count}개",
     summaryGraphTags: "관계 유형",
     summaryGraphTagsValue: "{count}개",
+    summaryTagCountValue: "{count}개",
     navChunkingSummary: "청크 {size}",
     statusOn: "켜짐",
     statusOff: "꺼짐",

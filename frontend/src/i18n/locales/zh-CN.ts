@@ -713,6 +713,7 @@ export default {
     summaryQuestionCountValue: "{count} 个",
     summaryGraphTags: "关系类型",
     summaryGraphTagsValue: "{count} 个",
+    summaryTagCountValue: "{count} 个",
     navChunkingSummary: "分块 {size}",
     statusOn: "已开启",
     statusOff: "未开启",

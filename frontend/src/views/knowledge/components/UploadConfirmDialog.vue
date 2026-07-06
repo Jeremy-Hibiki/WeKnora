@@ -599,13 +599,13 @@ const overviewLines = computed(() => {
           : t('uploadConfirm.statusOn'))
         : t('uploadConfirm.statusOff'),
     },
-    {
+    ...(props.mode === 'file' ? [{
       key: 'tags',
       title: t('uploadConfirm.tabTags'),
       value: selectedTagIds.value.size
-        ? t('knowledgeBase.tagSelectedCount', { count: selectedTagIds.value.size })
+        ? t('uploadConfirm.summaryTagCountValue', { count: selectedTagIds.value.size })
         : t('uploadConfirm.tagsNone'),
-    },
+    }] : []),
   ]
 })
 
@@ -943,8 +943,10 @@ async function handleCreateTag() {
   try {
     const res: any = await createKnowledgeBaseTag(props.kbInfo.id, { name })
     const newTag = res?.data || res
-    allTags.value.push({ id: String(newTag.id), name: newTag.name })
-    selectedTagIds.value.add(String(newTag.id))
+    allTags.value = [...allTags.value, { id: String(newTag.id), name: newTag.name }]
+    const next = new Set(selectedTagIds.value)
+    next.add(String(newTag.id))
+    selectedTagIds.value = next
     tagSearchQuery.value = ''
     MessagePlugin.success(t('knowledgeBase.tagCreateSuccess'))
   } catch (error: any) {
@@ -1522,24 +1524,30 @@ const handleConfirm = () => {
 .upload-tag-chip {
   display: inline-flex;
   align-items: center;
-  padding: 4px 12px;
+  height: 24px;
+  padding: 0 10px;
   border: 1px solid var(--td-component-stroke);
   border-radius: 4px;
   background: var(--td-bg-color-container);
-  font-size: 13px;
-  color: var(--td-text-color-primary);
+  color: var(--td-text-color-secondary);
+  font-size: 12px;
+  line-height: 24px;
   cursor: pointer;
-  transition: all 0.18s ease;
+  outline: none;
+  white-space: nowrap;
+  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
 
   &:hover {
-    border-color: var(--td-brand-color);
-    color: var(--td-brand-color);
+    border-color: var(--td-component-stroke);
+    background: var(--td-bg-color-secondarycontainer);
+    color: var(--td-text-color-primary);
   }
 
   &.is-selected {
-    border-color: var(--td-brand-color);
-    background: var(--td-brand-color-1);
-    color: var(--td-brand-color);
+    border-color: transparent;
+    background: var(--td-bg-color-secondarycontainer);
+    color: var(--td-text-color-primary);
+    font-weight: 500;
   }
 }
 
