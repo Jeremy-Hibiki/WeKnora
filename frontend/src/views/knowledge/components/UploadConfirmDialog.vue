@@ -236,10 +236,9 @@
                       <div class="upload-tags-heading">
                         <h4>{{ t('uploadConfirm.tagsSelect') }}</h4>
                       </div>
-                      <div v-if="selectedTagIds.size > 0" class="upload-tags-selected">
+                      <div v-if="selectedTagsList.length > 0" class="upload-tags-selected">
                         <button
-                          v-for="tag in allTags"
-                          v-show="isTagSelected(tag.id)"
+                          v-for="tag in selectedTagsList"
                           :key="tag.id"
                           type="button"
                           class="upload-tag-chip is-selected"
@@ -276,7 +275,7 @@
                       <div v-else class="upload-tags-empty">
                         <span>{{ tagSearchQuery.trim() ? t('knowledgeBase.tagEmptyResult') : t('knowledgeBase.noTags') }}</span>
                         <t-button
-                          v-if="tagSearchQuery.trim()"
+                          v-if="tagSearchQuery.trim() && !isCreatingDuplicate"
                           variant="text"
                           theme="default"
                           size="small"
@@ -922,9 +921,9 @@ function toggleTag(tagId: string) {
   selectedTagIds.value = next
 }
 
-function isTagSelected(tagId: string) {
-  return selectedTagIds.value.has(tagId)
-}
+const selectedTagsList = computed(() => {
+  return allTags.value.filter(tag => selectedTagIds.value.has(tag.id))
+})
 
 const availableTags = computed(() => {
   const query = tagSearchQuery.value.trim().toLowerCase()
@@ -935,10 +934,25 @@ const availableTags = computed(() => {
   })
 })
 
+const isCreatingDuplicate = computed(() => {
+  const name = tagSearchQuery.value.trim().toLowerCase()
+  if (!name) return false
+  return allTags.value.some(tag => tag.name.toLowerCase() === name)
+})
+
 async function handleCreateTag() {
   if (!props.kbInfo?.id) return
   const name = tagSearchQuery.value.trim()
   if (!name) return
+  // If a same-name tag already exists, just select it instead of creating a duplicate
+  const existing = allTags.value.find(tag => tag.name.toLowerCase() === name.toLowerCase())
+  if (existing) {
+    const next = new Set(selectedTagIds.value)
+    next.add(existing.id)
+    selectedTagIds.value = next
+    tagSearchQuery.value = ''
+    return
+  }
   creatingTag.value = true
   try {
     const res: any = await createKnowledgeBaseTag(props.kbInfo.id, { name })
