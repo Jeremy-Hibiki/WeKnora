@@ -123,28 +123,44 @@
       :close-on-overlay-click="false"
       @confirm="submitCreate"
     >
-      <t-form :data="createForm" :rules="createRules" ref="createFormRef" label-align="top">
+      <t-form :data="createForm" :rules="createRules" ref="createFormRef" layout="vertical">
         <t-form-item :label="t('userManagement.createDialog.username')" name="username">
           <t-input
             v-model="createForm.username"
+            :placeholder="t('userManagement.createDialog.usernamePlaceholder')"
+            size="large"
             clearable
             autofocus
-            :placeholder="t('userManagement.createDialog.usernamePlaceholder')"
           />
         </t-form-item>
         <t-form-item :label="t('userManagement.createDialog.email')" name="email">
           <t-input
             v-model="createForm.email"
-            clearable
             :placeholder="t('userManagement.createDialog.emailPlaceholder')"
+            type="text"
+            size="large"
+            clearable
+            autocomplete="email"
           />
         </t-form-item>
         <t-form-item :label="t('userManagement.createDialog.password')" name="password">
           <t-input
             v-model="createForm.password"
-            type="password"
-            clearable
             :placeholder="t('userManagement.createDialog.passwordPlaceholder')"
+            type="password"
+            size="large"
+            clearable
+            autocomplete="new-password"
+          />
+        </t-form-item>
+        <t-form-item :label="t('userManagement.createDialog.confirmPassword')" name="confirmPassword">
+          <t-input
+            v-model="createForm.confirmPassword"
+            :placeholder="t('userManagement.createDialog.confirmPasswordPlaceholder')"
+            type="password"
+            size="large"
+            clearable
+            autocomplete="new-password"
           />
         </t-form-item>
       </t-form>
@@ -197,7 +213,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { MessagePlugin } from 'tdesign-vue-next'
 import type { PrimaryTableCol, PageInfo } from 'tdesign-vue-next'
@@ -269,27 +285,55 @@ function onSearchClear() {
 }
 
 // --- create dialog ---
+// Mirrors the Login.vue register form: same reactive shape, same
+// computed rules (username 2-20 + CJK/alnum pattern, password 8-32 +
+// letter & digit, confirm-password match), so an admin-created account
+// satisfies the exact same constraints a self-registrant would.
 const createVisible = ref(false)
 const createBusy = ref(false)
 const createFormRef = ref()
-const createForm = ref({ username: '', email: '', password: '' })
-const createRules = {
+const createForm = reactive<{ [key: string]: any }>({
+  username: '',
+  email: '',
+  password: '',
+  confirmPassword: '',
+})
+const createRules = computed(() => ({
   username: [
-    { required: true, message: t('userManagement.validation.usernameRequired'), trigger: 'blur' },
-    { min: 2, max: 50, message: t('userManagement.validation.usernameLength'), trigger: 'blur' },
+    { required: true, message: t('userManagement.validation.usernameRequired'), type: 'error' },
+    { min: 2, message: t('userManagement.validation.usernameMinLength'), type: 'error' },
+    { max: 20, message: t('userManagement.validation.usernameMaxLength'), type: 'error' },
+    {
+      pattern: /^[a-zA-Z0-9_\u4e00-\u9fa5]+$/,
+      message: t('userManagement.validation.usernameInvalid'),
+      type: 'error',
+    },
   ],
   email: [
-    { required: true, message: t('userManagement.validation.emailRequired'), trigger: 'blur' },
-    { email: true, message: t('userManagement.validation.emailInvalid'), trigger: 'blur' },
+    { required: true, message: t('userManagement.validation.emailRequired'), type: 'error' },
+    { email: true, message: t('userManagement.validation.emailInvalid'), type: 'error' },
   ],
   password: [
-    { required: true, message: t('userManagement.validation.passwordRequired'), trigger: 'blur' },
-    { min: 6, message: t('userManagement.validation.passwordLength'), trigger: 'blur' },
+    { required: true, message: t('userManagement.validation.passwordRequired'), type: 'error' },
+    { min: 8, message: t('userManagement.validation.passwordMinLength'), type: 'error' },
+    { max: 32, message: t('userManagement.validation.passwordMaxLength'), type: 'error' },
+    { pattern: /[a-zA-Z]/, message: t('userManagement.validation.passwordMustContainLetter'), type: 'error' },
+    { pattern: /\d/, message: t('userManagement.validation.passwordMustContainNumber'), type: 'error' },
   ],
-}
+  confirmPassword: [
+    { required: true, message: t('userManagement.validation.confirmPasswordRequired'), type: 'error' },
+    {
+      validator: (val: string) => val === createForm.password,
+      message: t('userManagement.validation.passwordMismatch'),
+      type: 'error',
+    },
+  ],
+}))
 
 function openCreateDialog() {
-  createForm.value = { username: '', email: '', password: '' }
+  Object.keys(createForm).forEach((key) => {
+    (createForm as any)[key] = ''
+  })
   createVisible.value = true
 }
 
@@ -298,7 +342,11 @@ async function submitCreate() {
   if (valid !== true) return
   createBusy.value = true
   try {
-    await adminCreateUser({ ...createForm.value })
+    await adminCreateUser({
+      username: createForm.username,
+      email: createForm.email,
+      password: createForm.password,
+    })
     MessagePlugin.success(t('userManagement.messages.createSuccess'))
     createVisible.value = false
     pagination.value.current = 1
