@@ -117,50 +117,49 @@
       v-model:visible="createVisible"
       :header="t('userManagement.createDialog.title')"
       width="480px"
-      :confirm-btn="{ content: t('userManagement.createDialog.confirm'), loading: createBusy }"
-      :cancel-btn="t('userManagement.createDialog.cancel')"
+      :confirm-btn="{ content: t('common.create'), loading: createBusy }"
+      :cancel-btn="t('common.cancel')"
       :close-on-esc-keydown="false"
       :close-on-overlay-click="false"
       @confirm="submitCreate"
     >
-      <t-form :data="createForm" :rules="createRules" ref="createFormRef" layout="vertical">
-        <t-form-item :label="t('userManagement.createDialog.username')" name="username">
+      <t-form ref="createFormRef" :data="createForm" :rules="createRules" layout="vertical">
+        <t-form-item :label="t('auth.username')" name="username">
           <t-input
             v-model="createForm.username"
-            :placeholder="t('userManagement.createDialog.usernamePlaceholder')"
+            :placeholder="t('auth.usernamePlaceholder')"
             size="large"
-            clearable
-            autofocus
+            :disabled="createBusy"
           />
         </t-form-item>
-        <t-form-item :label="t('userManagement.createDialog.email')" name="email">
+        <t-form-item :label="t('auth.email')" name="email">
           <t-input
             v-model="createForm.email"
-            :placeholder="t('userManagement.createDialog.emailPlaceholder')"
+            :placeholder="t('auth.emailPlaceholder')"
             type="text"
-            size="large"
-            clearable
             autocomplete="email"
+            size="large"
+            :disabled="createBusy"
           />
         </t-form-item>
-        <t-form-item :label="t('userManagement.createDialog.password')" name="password">
+        <t-form-item :label="t('auth.password')" name="password">
           <t-input
             v-model="createForm.password"
-            :placeholder="t('userManagement.createDialog.passwordPlaceholder')"
+            :placeholder="t('auth.passwordPlaceholder')"
             type="password"
-            size="large"
-            clearable
             autocomplete="new-password"
+            size="large"
+            :disabled="createBusy"
           />
         </t-form-item>
-        <t-form-item :label="t('userManagement.createDialog.confirmPassword')" name="confirmPassword">
+        <t-form-item :label="t('auth.confirmPassword')" name="confirmPassword">
           <t-input
             v-model="createForm.confirmPassword"
-            :placeholder="t('userManagement.createDialog.confirmPasswordPlaceholder')"
+            :placeholder="t('auth.confirmPasswordPlaceholder')"
             type="password"
-            size="large"
-            clearable
             autocomplete="new-password"
+            size="large"
+            :disabled="createBusy"
           />
         </t-form-item>
       </t-form>
@@ -170,8 +169,8 @@
     <t-dialog
       v-model:visible="resetVisible"
       :header="t('userManagement.resetDialog.title', { name: resetTarget?.username || '' })"
-      :confirm-btn="{ content: t('userManagement.resetDialog.confirm'), loading: resetBusy }"
-      :cancel-btn="t('userManagement.resetDialog.cancel')"
+      :confirm-btn="{ content: t('common.confirm'), loading: resetBusy }"
+      :cancel-btn="t('common.cancel')"
       :close-on-esc-keydown="false"
       :close-on-overlay-click="false"
       @confirm="submitReset"
@@ -179,19 +178,25 @@
       <p class="reset-warning">
         {{ t('userManagement.resetDialog.warning', { email: resetTarget?.email || '' }) }}
       </p>
-      <t-form :data="resetForm" :rules="resetRules" ref="resetFormRef" label-align="top">
-        <t-form-item :label="t('userManagement.resetDialog.newPassword')" name="new_password">
+      <t-form ref="resetFormRef" :data="resetForm" :rules="resetRules" layout="vertical">
+        <t-form-item :label="t('auth.password')" name="new_password">
           <t-input
             v-model="resetForm.new_password"
+            :placeholder="t('auth.passwordPlaceholder')"
             type="password"
-            :placeholder="t('userManagement.resetDialog.passwordPlaceholder')"
+            autocomplete="new-password"
+            size="large"
+            :disabled="resetBusy"
           />
         </t-form-item>
-        <t-form-item :label="t('userManagement.resetDialog.confirmPassword')" name="confirm_password">
+        <t-form-item :label="t('auth.confirmPassword')" name="confirm_password">
           <t-input
             v-model="resetForm.confirm_password"
+            :placeholder="t('auth.confirmPasswordPlaceholder')"
             type="password"
-            :placeholder="t('userManagement.resetDialog.passwordPlaceholder')"
+            autocomplete="new-password"
+            size="large"
+            :disabled="resetBusy"
           />
         </t-form-item>
       </t-form>
@@ -201,8 +206,8 @@
     <t-dialog
       v-model:visible="disableVisible"
       :header="t('userManagement.disableDialog.title')"
-      :confirm-btn="{ content: t('userManagement.disableDialog.confirm'), loading: toggleBusy, theme: 'warning' }"
-      :cancel-btn="t('userManagement.disableDialog.cancel')"
+      :confirm-btn="{ content: t('common.confirm'), loading: toggleBusy, theme: 'warning' }"
+      :cancel-btn="t('common.cancel')"
       @confirm="submitToggle"
     >
       <p class="reset-warning">
@@ -300,34 +305,34 @@ const createForm = reactive<{ [key: string]: any }>({
 })
 const createRules = computed(() => ({
   username: [
-    { required: true, message: t('userManagement.validation.usernameRequired'), type: 'error' },
-    { min: 2, message: t('userManagement.validation.usernameMinLength'), type: 'error' },
-    { max: 20, message: t('userManagement.validation.usernameMaxLength'), type: 'error' },
+    { required: true, message: t('auth.usernameRequired'), type: 'error' },
+    { min: 2, message: t('auth.usernameMinLength'), type: 'error' },
+    { max: 20, message: t('auth.usernameMaxLength'), type: 'error' },
     {
       pattern: /^[a-zA-Z0-9_\u4e00-\u9fa5]+$/,
-      message: t('userManagement.validation.usernameInvalid'),
-      type: 'error',
-    },
+      message: t('auth.usernameInvalid'),
+      type: 'error'
+    }
   ],
   email: [
-    { required: true, message: t('userManagement.validation.emailRequired'), type: 'error' },
-    { email: true, message: t('userManagement.validation.emailInvalid'), type: 'error' },
+    { required: true, message: t('auth.emailRequired'), type: 'error' },
+    { email: true, message: t('auth.emailInvalid'), type: 'error' }
   ],
   password: [
-    { required: true, message: t('userManagement.validation.passwordRequired'), type: 'error' },
-    { min: 8, message: t('userManagement.validation.passwordMinLength'), type: 'error' },
-    { max: 32, message: t('userManagement.validation.passwordMaxLength'), type: 'error' },
-    { pattern: /[a-zA-Z]/, message: t('userManagement.validation.passwordMustContainLetter'), type: 'error' },
-    { pattern: /\d/, message: t('userManagement.validation.passwordMustContainNumber'), type: 'error' },
+    { required: true, message: t('auth.passwordRequired'), type: 'error' },
+    { min: 8, message: t('auth.passwordMinLength'), type: 'error' },
+    { max: 32, message: t('auth.passwordMaxLength'), type: 'error' },
+    { pattern: /[a-zA-Z]/, message: t('auth.passwordMustContainLetter'), type: 'error' },
+    { pattern: /\d/, message: t('auth.passwordMustContainNumber'), type: 'error' }
   ],
   confirmPassword: [
-    { required: true, message: t('userManagement.validation.confirmPasswordRequired'), type: 'error' },
+    { required: true, message: t('auth.confirmPasswordRequired'), type: 'error' },
     {
       validator: (val: string) => val === createForm.password,
-      message: t('userManagement.validation.passwordMismatch'),
-      type: 'error',
-    },
-  ],
+      message: t('auth.passwordMismatch'),
+      type: 'error'
+    }
+  ]
 }))
 
 function openCreateDialog() {
@@ -364,20 +369,23 @@ const resetBusy = ref(false)
 const resetFormRef = ref()
 const resetTarget = ref<AdminUser | null>(null)
 const resetForm = ref({ new_password: '', confirm_password: '' })
-const resetRules = {
+const resetRules = computed(() => ({
   new_password: [
-    { required: true, message: t('userManagement.validation.passwordRequired'), trigger: 'blur' },
-    { min: 6, message: t('userManagement.validation.passwordLength'), trigger: 'blur' },
+    { required: true, message: t('auth.passwordRequired'), type: 'error' },
+    { min: 8, message: t('auth.passwordMinLength'), type: 'error' },
+    { max: 32, message: t('auth.passwordMaxLength'), type: 'error' },
+    { pattern: /[a-zA-Z]/, message: t('auth.passwordMustContainLetter'), type: 'error' },
+    { pattern: /\d/, message: t('auth.passwordMustContainNumber'), type: 'error' },
   ],
   confirm_password: [
-    { required: true, message: t('userManagement.validation.passwordRequired'), trigger: 'blur' },
+    { required: true, message: t('auth.confirmPasswordRequired'), type: 'error' },
     {
       validator: (val: string) => val === resetForm.value.new_password,
-      message: t('userManagement.validation.passwordMismatch'),
-      trigger: 'blur',
+      message: t('auth.passwordMismatch'),
+      type: 'error',
     },
   ],
-}
+}))
 
 function openResetDialog(row: AdminUser) {
   resetTarget.value = row
