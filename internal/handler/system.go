@@ -1373,6 +1373,261 @@ func (h *SystemHandler) ListSystemAdmins(c *gin.Context) {
 // already follows this; do not break the convention.
 // ============================================================================
 
+// ---------------------------------------------------------------------------
+// User Management (SystemAdmin)
+//
+// Mounted under /api/v1/system/admin/users*. Same response convention as
+// the system-admin and settings handlers above: raw model / response struct,
+// no {data:...} wrapping (the axios interceptor unwraps at the HTTP layer).
+// All four endpoints inherit the SystemAdmin guard from the route group.
+// ---------------------------------------------------------------------------
+
+// ListUsersResponse is the paginated payload for GET /system/admin/users.
+// `total` reflects the count after the search filter is applied, not the
+// whole-table count, so the front-end pagination control stays correct
+// when a search query narrows the result set.
+type ListUsersResponse struct {
+	Total int64             `json:"total"`
+	Users []*types.UserInfo `json:"users"`
+}
+
+// ListUsers godoc
+// @Summary      List all users (platform-wide)
+// @Description  Return a paginated list of every user in the platform,
+// @Description  optionally filtered by a substring match over username /
+// @Description  email (`?search=...`). SystemAdmin only. Page size is capped
+// @Description  at 200 to keep large tables responsive.
+// @Tags         System Admin
+// @Produce      json
+// @Param        search query string false "Substring filter on username/email"
+// @Param        offset query int    false "Page offset" default(0)
+// @Param        limit  query int    false "Page size (max 200)" default(50)
+// @Success      200  {object}  ListUsersResponse
+// @Failure      403  {object}  map[string]interface{} "Forbidden: not a system admin"
+// @Router       /system/admin/users [get]
+func (h *SystemHandler) ListUsers(c *gin.Context) {
+	ctx := logger.CloneContext(c.Request.Context())
+
+	offset := 0
+	limit := 50
+	if v := c.Query("offset"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			offset = n
+		}
+	}
+	if v := c.Query("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			limit = n
+		}
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	search := strings.TrimSpace(c.Query("search"))
+
+	users, total, err := h.userSvc.ListAllUsers(ctx, search, offset, limit)
+	if err != nil {
+		logger.Errorf(ctx, "Error listing users (search=%q): %v", search, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list users"})
+		return
+	}
+
+	infos := make([]*types.UserInfo, 0, len(users))
+	for _, u := range users {
+		infos = append(infos, u.ToUserInfo())
+	}
+	c.JSON(http.StatusOK, ListUsersResponse{Total: total, Users: infos})
+}
+
+// AdminCreateUserRequest is the body for POST /system/admin/users. Mirrors
+// types.RegisterRequest but is declared separately so the Swagger contract
+// documents the admin-only surface distinctly from public self-registration.
+type AdminCreateUserRequest struct {
+	Username string `json:"username" binding:"required,min=2,max=50"`
+	Email    string `json:"email"    binding:"required,email"`
+	Password string `json:"password" binding:"required,min=6"`
+}
+
+// AdminCreateUser godoc
+// @Summary      Create a new user (admin)
+// @Description  Provision a brand-new user account on behalf of a system
+// @Description  administrator. Bypasses the public registration_mode gate
+// @Description  (the SystemAdmin role is the authorisation). The new user
+// @Description  gets a default workspace + Owner membership, identical to
+// @Description  self-service registration; no login tokens are returned —
+// @Description  the user signs in themselves.
+// @Tags         System Admin
+// @Accept       json
+// @Produce      json
+// @Param        request body AdminCreateUserRequest true "New user details"
+// @Success      200  {object}  types.UserInfo "User created"
+// @Failure      400  {object}  map[string]interface{} "Bad request / duplicate"
+// @Failure      403  {object}  map[string]interface{} "Forbidden: not a system admin"
+// @Router       /system/admin/users [post]
+func (h *SystemHandler) AdminCreateUser(c *gin.Context) {
+	ctx := logger.CloneContext(c.Request.Context())
+
+	var req AdminCreateUserRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request: " + err.Error()})
+		return
+	}
+
+	user, err := h.userSvc.AdminCreateUser(ctx, &types.RegisterRequest{
+		Username: req.Username,
+		Email:    req.Email,
+		Password: req.Password,
+	})
+	if err != nil {
+		logger.Errorf(ctx, "Error creating user (email=%q): %v", req.Email, err)
+		// The service returns user-facing messages ("user with this email
+		// already exists", etc.) so we surface them verbatim as 400.
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	h.emitAdminAudit(ctx, types.AuditActionSystemUserCreated, user, map[string]any{
+		"target_email":    user.Email,
+		"target_username": user.Username,
+	})
+	c.JSON(http.StatusOK, user.ToUserInfo())
+}
+
+// UpdateUserStatusRequest is the body for PUT /system/admin/users/:id/status.
+// `is_active` toggles the account between enabled (true) and disabled (false).
+type UpdateUserStatusRequest struct {
+	IsActive bool `json:"is_active"`
+}
+
+// UpdateUserStatus godoc
+// @Summary      Enable or disable a user
+// @Description  Flip a user's active status. Disabling revokes every
+// @Description  outstanding session token for the user so an existing
+// @Description  access token stops working immediately. The caller cannot
+// @Description  disable themselves (prevents a system admin from locking
+// @Description  themselves out). Idempotent: setting the current status
+// @Description  again is a no-op success.
+// @Tags         System Admin
+// @Accept       json
+// @Produce      json
+// @Param        id      path string                  true "User ID"
+// @Param        request body UpdateUserStatusRequest true "New status"
+// @Success      200  {object}  types.UserInfo "Updated user"
+// @Failure      400  {object}  map[string]interface{} "Bad request / self-disable"
+// @Failure      403  {object}  map[string]interface{} "Forbidden: not a system admin"
+// @Failure      404  {object}  map[string]interface{} "User not found"
+// @Router       /system/admin/users/{id}/status [put]
+func (h *SystemHandler) UpdateUserStatus(c *gin.Context) {
+	ctx := logger.CloneContext(c.Request.Context())
+	userID := strings.TrimSpace(c.Param("id"))
+	if userID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "User id is required"})
+		return
+	}
+
+	var req UpdateUserStatusRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request: " + err.Error()})
+		return
+	}
+
+	// Safety: a system admin must not be able to disable themselves —
+	// otherwise a misclick could lock the only active admin out of the
+	// platform entirely. Re-enabling yourself is harmless and allowed.
+	callerID, _ := types.UserIDFromContext(ctx)
+	if !req.IsActive && userID == callerID {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Cannot disable your own account"})
+		return
+	}
+
+	user, err := h.userSvc.SetUserActive(ctx, userID, req.IsActive)
+	if err != nil {
+		if errors.Is(err, repository.ErrUserNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
+			return
+		}
+		logger.Errorf(ctx, "Error updating user %s status to %v: %v", userID, req.IsActive, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update user status"})
+		return
+	}
+
+	action := types.AuditActionSystemUserActivated
+	if !req.IsActive {
+		action = types.AuditActionSystemUserDeactivated
+	}
+	h.emitAdminAudit(ctx, action, user, map[string]any{
+		"target_email":    user.Email,
+		"target_username": user.Username,
+	})
+	c.JSON(http.StatusOK, user.ToUserInfo())
+}
+
+// AdminResetPasswordRequest is the body for
+// POST /system/admin/users/:id/reset-password. The new password is never
+// logged to the audit feed — only the fact that a reset happened.
+type AdminResetPasswordRequest struct {
+	NewPassword string `json:"new_password" binding:"required,min=6"`
+}
+
+// AdminResetPassword godoc
+// @Summary      Reset a user's password (admin)
+// @Description  Set a new password for a user without requiring the old
+// @Description  password. The SystemAdmin caller is the authorisation.
+// @Description  Every outstanding session token for the user is revoked
+// @Description  so a stolen token cannot survive the reset. The new
+// @Description  password itself is never logged.
+// @Tags         System Admin
+// @Accept       json
+// @Produce      json
+// @Param        id      path string                     true "User ID"
+// @Param        request body AdminResetPasswordRequest  true "New password"
+// @Success      200  {object}  map[string]interface{} "{ ok: true }"
+// @Failure      400  {object}  map[string]interface{} "Bad request"
+// @Failure      403  {object}  map[string]interface{} "Forbidden: not a system admin"
+// @Failure      404  {object}  map[string]interface{} "User not found"
+// @Router       /system/admin/users/{id}/reset-password [post]
+func (h *SystemHandler) AdminResetPassword(c *gin.Context) {
+	ctx := logger.CloneContext(c.Request.Context())
+	userID := strings.TrimSpace(c.Param("id"))
+	if userID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "User id is required"})
+		return
+	}
+
+	var req AdminResetPasswordRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request: " + err.Error()})
+		return
+	}
+
+	// Resolve the user up front so the audit row carries the target's
+	// email / username and so a missing user 404s before we write a
+	// password hash. AdminResetPassword re-fetches internally, but the
+	// extra read is cheap and keeps the audit payload rich.
+	user, err := h.userSvc.GetUserByID(ctx, userID)
+	if err != nil {
+		if errors.Is(err, repository.ErrUserNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
+			return
+		}
+		logger.Errorf(ctx, "Error fetching user %s before password reset: %v", userID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to reset password"})
+		return
+	}
+
+	if err := h.userSvc.AdminResetPassword(ctx, userID, req.NewPassword); err != nil {
+		logger.Errorf(ctx, "Error resetting password for user %s: %v", userID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to reset password"})
+		return
+	}
+
+	h.emitAdminAudit(ctx, types.AuditActionSystemUserPasswordReset, user, map[string]any{
+		"target_email":    user.Email,
+		"target_username": user.Username,
+	})
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
 // ListSystemSettings godoc
 // @Summary      List all system settings
 // @Description  Return every row in the system_settings table (system-scope,

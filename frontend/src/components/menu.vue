@@ -85,7 +85,7 @@
                         <div class="menu_item-box">
                             <div class="menu_icon">
                                 <img class="icon"
-                                    :src="getImgSrc(item.icon == 'zhishiku' ? knowledgeIcon : item.icon == 'agent' ? agentIcon : item.icon == 'organization' ? organizationIcon : item.icon == 'logout' ? logoutIcon : item.icon == 'setting' ? settingIcon : prefixIcon)"
+                                    :src="getImgSrc(item.icon == 'zhishiku' ? knowledgeIcon : item.icon == 'agent' ? agentIcon : item.icon == 'integration' ? integrationIcon : item.icon == 'organization' ? organizationIcon : item.icon == 'user' ? userMgmtIcon : item.icon == 'logout' ? logoutIcon : item.icon == 'setting' ? settingIcon : prefixIcon)"
                                     alt="">
                             </div>
                             <template v-if="!uiStore.sidebarCollapsed">
@@ -94,6 +94,15 @@
                                     class="menu-pending-badge"
                                     :title="t('organization.settings.pendingJoinRequestsBadge')">{{
                                         orgStore.totalPendingJoinRequestCount }}</span>
+                                <span v-if="item.path === 'integrations'" class="integration-preview"
+                                    aria-hidden="true">
+                                    <span v-for="(preview, idx) in integrationPreviewItems" :key="preview.key"
+                                        class="integration-preview__item" :style="{ zIndex: idx + 1 }">
+                                        <t-icon v-if="preview.icon.type === 'icon'" :name="preview.icon.name"
+                                            size="13px" />
+                                        <span v-else class="integration-preview__emoji">{{ preview.icon.value }}</span>
+                                    </span>
+                                </span>
                             </template>
                         </div>
                     </div>
@@ -153,7 +162,6 @@
                                             @navigate="gotopage(subitem.path)"
                                             @toggle-select="toggleBatchSelect(subitem.id)"
                                             @menu-click="handleSessionMenuClick($event, subitem)"
-                                            @rename-submit="renameSessionTitle(subitem, $event.title)"
                                             @hover-in="mouseenteBotDownr(subitem.id)" @hover-out="mouseleaveBotDown" />
                                     </div>
                                 </div>
@@ -202,7 +210,7 @@
 import { storeToRefs } from 'pinia';
 import { onMounted, onUnmounted, watch, computed, ref, h, nextTick } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { getSessionsList, delSession, batchDelSessions, deleteAllSessions, clearSessionMessages, pinSession, unpinSession, updateSession } from "@/api/chat/index";
+import { getSessionsList, delSession, batchDelSessions, deleteAllSessions, clearSessionMessages, pinSession, unpinSession } from "@/api/chat/index";
 import { useChatResourcesStore } from '@/stores/chatResources';
 import { listAllIMChannels } from '@/api/agent/index';
 import SessionSidebarRow from './SessionSidebarRow.vue';
@@ -249,8 +257,17 @@ import UserMenu from '@/components/UserMenu.vue';
 import TenantSelector from '@/components/TenantSelector.vue';
 import { useI18n } from 'vue-i18n';
 import { getSystemInfo } from '@/api/system';
+import { INTEGRATION_PREVIEW_ITEMS, INTEGRATION_TAB_MIN_ROLE } from '@/config/integrations';
 
 const chatResources = useChatResourcesStore();
+const integrationPreviewItems = computed(() =>
+    INTEGRATION_PREVIEW_ITEMS.filter((item) => {
+        const min = INTEGRATION_TAB_MIN_ROLE[item.key];
+        if (!min) return true;
+        if (authStore.canAccessAllTenants) return true;
+        return authStore.hasRole(min);
+    }),
+);
 // Platform logos reused from IMChannelsOverviewPanel — keeps the session list
 // visually consistent with the channels admin view.
 import wecomLogo from '@/assets/img/im/wecom.svg';
@@ -395,8 +412,12 @@ const isMenuItemActive = (itemPath: string): boolean => {
                 currentRoute === 'knowledgeBaseSettings';
         case 'agents':
             return currentRoute === 'agentList';
+        case 'integrations':
+            return currentRoute === 'integrations';
         case 'organizations':
             return currentRoute === 'organizationList';
+        case 'admin-users':
+            return currentRoute === 'adminUserManagement';
         case 'creatChat':
             return currentRoute === 'kbCreatChat' || currentRoute === 'globalCreatChat';
         case 'settings':
@@ -425,13 +446,13 @@ const getIconActiveState = (itemPath: string) => {
 // 分离上下两部分菜单（使用 visibleMenuArr 以便 lite 模式过滤 logout）
 const topMenuItems = computed<MenuItem[]>(() => {
     return (visibleMenuArr.value as unknown as MenuItem[]).filter((item: MenuItem) =>
-        item.path === 'knowledge-bases' || item.path === 'agents' || item.path === 'organizations' || item.path === 'creatChat'
+        item.path === 'knowledge-bases' || item.path === 'agents' || item.path === 'integrations' || item.path === 'organizations' || item.path === 'creatChat'
     );
 });
 
 const bottomMenuItems = computed<MenuItem[]>(() => {
     return (visibleMenuArr.value as unknown as MenuItem[]).filter((item: MenuItem) => {
-        if (item.path === 'knowledge-bases' || item.path === 'agents' || item.path === 'organizations' || item.path === 'creatChat') {
+        if (item.path === 'knowledge-bases' || item.path === 'agents' || item.path === 'integrations' || item.path === 'organizations' || item.path === 'creatChat') {
             return false;
         }
         return true;
@@ -617,7 +638,6 @@ const buildSessionMenuOptions = (item: any) => {
         });
     }
     options.push(
-        { content: t('menu.renameSession'), value: 'rename', prefixIcon: () => h(TIcon, { name: 'edit-1', size: '16px' }) },
         { content: t('menu.clearMessages'), value: 'clearMessages', prefixIcon: () => h(TIcon, { name: 'clear', size: '16px' }) },
         { content: t('menu.batchManage'), value: 'batchManage', prefixIcon: () => h(TIcon, { name: 'queue', size: '16px' }) },
         { content: t('upload.deleteRecord'), value: 'delete', theme: 'error', prefixIcon: () => h(TIcon, { name: 'delete', size: '16px' }) },
@@ -638,26 +658,6 @@ const updateSessionInBuckets = (
     }
     sessionBuckets.value = next;
     syncMenuStoreFromBuckets();
-};
-
-const renameSessionTitle = async (item: any, title: string) => {
-    try {
-        const res: any = await updateSession(item.id, {
-            title,
-            description: item.description || '',
-        });
-        if (res && res.success) {
-            updateSessionInBuckets(item.id, {
-                title: res.data?.title || title,
-                isNoTitle: false,
-            });
-            MessagePlugin.success(t('menu.renameSessionSuccess'));
-        } else {
-            MessagePlugin.error(t('menu.renameSessionFailed'));
-        }
-    } catch {
-        MessagePlugin.error(t('menu.renameSessionFailed'));
-    }
 };
 
 const togglePin = (item: any, pin: boolean) => {
@@ -1034,7 +1034,9 @@ let prefixIcon = ref('prefixIcon.svg');
 let logoutIcon = ref('logout.svg');
 let settingIcon = ref('setting.svg');
 let agentIcon = ref('agent.svg');
+let integrationIcon = ref('integration.svg');
 let organizationIcon = ref('organization.svg');
+let userMgmtIcon = ref('user.svg');
 let pathPrefix = ref(route.name)
 const getIcon = (path: string) => {
     // 根据当前路由状态更新所有图标
@@ -1042,6 +1044,7 @@ const getIcon = (path: string) => {
     const creatChatActiveState = getIconActiveState('creatChat');
     const settingsActiveState = getIconActiveState('settings');
     const agentsActiveState = route.name === 'agentList';
+    const integrationsActiveState = route.name === 'integrations';
     const organizationsActiveState = route.name === 'organizationList';
 
     // 知识库图标：只在知识库页面显示绿色
@@ -1050,8 +1053,13 @@ const getIcon = (path: string) => {
     // 智能体图标：只在智能体页面显示绿色
     agentIcon.value = agentsActiveState ? 'agent-green.svg' : 'agent.svg';
 
+    integrationIcon.value = integrationsActiveState ? 'integration-green.svg' : 'integration.svg';
+
     // 组织图标：只在组织页面显示绿色
     organizationIcon.value = organizationsActiveState ? 'organization-green.svg' : 'organization.svg';
+
+    // 用户管理图标：只在用户管理页面显示绿色
+    userMgmtIcon.value = route.name === 'adminUserManagement' ? 'user-green.svg' : 'user.svg';
 
     // 对话图标：只在对话创建页面显示绿色，其他情况显示默认
     prefixIcon.value = creatChatActiveState.isCreatChatActive ? 'prefixIcon-green.svg' : 'prefixIcon.svg';
@@ -1074,9 +1082,14 @@ const handleMenuClick = async (path: string) => {
         }
     } else if (path === 'agents') {
         router.push('/platform/agents')
+    } else if (path === 'integrations') {
+        router.push('/platform/integrations')
     } else if (path === 'organizations') {
         // 组织菜单项：跳转到组织列表
         router.push('/platform/organizations')
+    } else if (path === 'admin-users') {
+        // 用户管理菜单项：仅系统管理员可见（菜单 store 已过滤）。
+        router.push('/platform/admin/users')
     } else if (path === 'settings') {
         // 设置菜单项：打开设置弹窗并跳转路由
         uiStore.openSettings()
@@ -1900,6 +1913,48 @@ const onDragHandleMouseDown = (e: MouseEvent) => {
     line-height: 18px;
     text-align: center;
     flex-shrink: 0;
+}
+
+.integration-preview {
+    display: inline-flex;
+    align-items: center;
+    margin-left: auto;
+    flex-shrink: 0;
+    width: 0;
+    overflow: hidden;
+    pointer-events: none;
+
+    .menu_item:hover & {
+        width: auto;
+    }
+
+    &__item {
+        position: relative;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 22px;
+        height: 22px;
+        flex-shrink: 0;
+        border-radius: 50%;
+        background: var(--td-bg-color-container);
+        border: 2px solid var(--td-bg-color-sidebar);
+        box-sizing: border-box;
+        color: var(--td-text-color-primary);
+
+        &:not(:first-child) {
+            margin-left: -5px;
+        }
+
+        :deep(.t-icon) {
+            display: block;
+        }
+    }
+
+    &__emoji {
+        font-size: 12px;
+        line-height: 1;
+    }
 }
 
 .menu_box {

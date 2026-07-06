@@ -876,6 +876,16 @@ func RegisterSystemAdminRoutes(
 		adminRoutes.POST("/revoke", handler.RevokeSystemAdmin)
 		adminRoutes.GET("/list", handler.ListSystemAdmins)
 
+		// User management (SystemAdmin). CRUD over the platform's user
+		// roster — list/search, create, enable/disable, reset password.
+		// All inherit the group's SystemAdmin guard. Same response
+		// convention (raw model, no {data:...} wrapping) as the settings
+		// endpoints below.
+		adminRoutes.GET("/users", handler.ListUsers)
+		adminRoutes.POST("/users", handler.AdminCreateUser)
+		adminRoutes.PUT("/users/:id/status", handler.UpdateUserStatus)
+		adminRoutes.POST("/users/:id/reset-password", handler.AdminResetPassword)
+
 		// P1: platform-wide system settings (DB-backed runtime tunables).
 		// Reads return raw model rows / arrays (no `gin.H{"data":...}`
 		// wrapping), matching the project's axios interceptor convention

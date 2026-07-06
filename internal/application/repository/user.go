@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
@@ -233,6 +234,41 @@ func (r *userRepository) RevokeSystemAdmin(ctx context.Context, userID, actorID 
 		return nil, err
 	}
 	return revoked, nil
+}
+
+// ListAllUsers lists every user with an optional substring search over
+// username / email. Returns the page plus the total count (matching the
+// filter) so the SystemAdmin UI can render pagination in one round-trip.
+// An empty `search` returns every user. Ordered by created_at DESC, id ASC
+// for stable, newest-first listing with deterministic paging across
+// boundaries — same ordering contract as ListSystemAdmins.
+//
+// The ILIKE (Postgres) / LOWER(LIKE) (SQLite/MySQL) pattern keeps the
+// search case-insensitive across both supported backends without a
+// dialect-specific helper; GORM expands the placeholder per-driver.
+func (r *userRepository) ListAllUsers(ctx context.Context, search string, offset, limit int) ([]*types.User, int64, error) {
+	var users []*types.User
+	var total int64
+
+	base := r.db.WithContext(ctx).Model(&types.User{})
+	if q := strings.TrimSpace(search); q != "" {
+		like := "%" + q + "%"
+		base = base.Where("username LIKE ? OR email LIKE ?", like, like)
+	}
+	if err := base.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	query := base.Order("created_at DESC, id ASC")
+	if limit > 0 {
+		query = query.Limit(limit)
+	}
+	if offset > 0 {
+		query = query.Offset(offset)
+	}
+	if err := query.Find(&users).Error; err != nil {
+		return nil, 0, err
+	}
+	return users, total, nil
 }
 
 // SearchUsers searches users by username or email

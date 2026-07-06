@@ -561,6 +561,80 @@ func (s *userService) UpdateUserPreferences(
 	return merged, nil
 }
 
+// ListAllUsers is a thin pass-through to the repository's paged+
+// filtered listing. The SystemAdmin role gate lives in the handler /
+// route layer; the service does not duplicate the check.
+func (s *userService) ListAllUsers(
+	ctx context.Context, search string, offset, limit int,
+) ([]*types.User, int64, error) {
+	return s.userRepo.ListAllUsers(ctx, search, offset, limit)
+}
+
+// AdminCreateUser creates a new user on behalf of a system administrator.
+// It reuses the same provisioning path as self-service Register —
+// duplicate-email / duplicate-username checks, password hashing, default
+// tenant creation, and Owner membership bootstrap — because the desired
+// end state (a fully usable account the new user can sign into) is
+// identical. The SystemAdmin role is the authorisation, so the public
+// registration_mode gate does not apply here.
+func (s *userService) AdminCreateUser(ctx context.Context, req *types.RegisterRequest) (*types.User, error) {
+	return s.Register(ctx, req)
+}
+
+// SetUserActive flips a user's IsActive flag. Disabling a user also
+// revokes every outstanding session token so an existing access token
+// cannot keep working after the account is disabled — mirrors the
+// session-invalidation semantics of ChangePassword.
+//
+// Re-enabling is a pure flag flip; no token issuance (the user signs in
+// themselves to get fresh tokens).
+func (s *userService) SetUserActive(ctx context.Context, userID string, active bool) (*types.User, error) {
+	user, err := s.userRepo.GetUserByID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	if user.IsActive == active {
+		// Idempotent: nothing to write, no session revocation needed.
+		return user, nil
+	}
+	user.IsActive = active
+	user.UpdatedAt = time.Now()
+	if err := s.userRepo.UpdateUser(ctx, user); err != nil {
+		return nil, err
+	}
+	if !active {
+		// Best-effort session revocation — a token-repo failure must not
+		// roll back the status change (the user is already disabled in
+		// the DB; a stale token will still fail the IsActive check in
+		// the auth middleware). Log and continue.
+		if err := s.tokenRepo.RevokeTokensByUserID(ctx, userID); err != nil {
+			logger.Errorf(ctx, "Failed to revoke tokens after disabling user %s: %v", userID, err)
+		}
+	}
+	return user, nil
+}
+
+// AdminResetPassword sets a new password for a user without requiring the
+// old password — the SystemAdmin caller is the authorisation. Mirrors
+// ChangePassword's post-reset behaviour: every outstanding session token
+// for the user is revoked so a stolen token cannot survive the rotation.
+func (s *userService) AdminResetPassword(ctx context.Context, userID, newPassword string) error {
+	user, err := s.userRepo.GetUserByID(ctx, userID)
+	if err != nil {
+		return err
+	}
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+	user.PasswordHash = string(hashedPassword)
+	user.UpdatedAt = time.Now()
+	if err := s.userRepo.UpdateUser(ctx, user); err != nil {
+		return err
+	}
+	return s.tokenRepo.RevokeTokensByUserID(ctx, userID)
+}
+
 // DeleteUser deletes a user
 func (s *userService) DeleteUser(ctx context.Context, id string) error {
 	return s.userRepo.DeleteUser(ctx, id)

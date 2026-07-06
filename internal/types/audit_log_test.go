@@ -37,6 +37,10 @@ func TestAuditAction_DotNamespaceConvention(t *testing.T) {
 		AuditActionSystemSettingChanged,
 		AuditActionSystemAdminPromoted,
 		AuditActionSystemAdminRevoked,
+		AuditActionSystemUserCreated,
+		AuditActionSystemUserActivated,
+		AuditActionSystemUserDeactivated,
+		AuditActionSystemUserPasswordReset,
 	}
 	for _, a := range all {
 		s := string(a)
@@ -118,6 +122,10 @@ func TestAuditAction_NoCollisionsAcrossNamespaces(t *testing.T) {
 	register("AuditActionSystemSettingChanged", AuditActionSystemSettingChanged)
 	register("AuditActionSystemAdminPromoted", AuditActionSystemAdminPromoted)
 	register("AuditActionSystemAdminRevoked", AuditActionSystemAdminRevoked)
+	register("AuditActionSystemUserCreated", AuditActionSystemUserCreated)
+	register("AuditActionSystemUserActivated", AuditActionSystemUserActivated)
+	register("AuditActionSystemUserDeactivated", AuditActionSystemUserDeactivated)
+	register("AuditActionSystemUserPasswordReset", AuditActionSystemUserPasswordReset)
 }
 
 // TestAuditAction_SystemNamespacePrefix pins the three system.* actions
@@ -131,6 +139,10 @@ func TestAuditAction_SystemNamespacePrefix(t *testing.T) {
 		AuditActionSystemSettingChanged,
 		AuditActionSystemAdminPromoted,
 		AuditActionSystemAdminRevoked,
+		AuditActionSystemUserCreated,
+		AuditActionSystemUserActivated,
+		AuditActionSystemUserDeactivated,
+		AuditActionSystemUserPasswordReset,
 	}
 	for _, a := range cases {
 		assert.True(t,
@@ -152,6 +164,10 @@ func TestAuditAction_SystemWireValues(t *testing.T) {
 		{AuditActionSystemSettingChanged, "system.setting_changed"},
 		{AuditActionSystemAdminPromoted, "system.admin_promoted"},
 		{AuditActionSystemAdminRevoked, "system.admin_revoked"},
+		{AuditActionSystemUserCreated, "system.user_created"},
+		{AuditActionSystemUserActivated, "system.user_activated"},
+		{AuditActionSystemUserDeactivated, "system.user_deactivated"},
+		{AuditActionSystemUserPasswordReset, "system.user_password_reset"},
 	}
 	for _, c := range cases {
 		assert.Equal(t, c.wire, string(c.constant))

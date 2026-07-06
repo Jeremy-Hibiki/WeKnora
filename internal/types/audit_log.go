@@ -116,6 +116,31 @@ const (
 	// reader can distinguish a real revoke from a noop attempt.
 	// TenantID=0 because the change is system-scope.
 	AuditActionSystemAdminRevoked AuditAction = "system.admin_revoked"
+
+	// User lifecycle events emitted by the system-admin user-management
+	// surface (GET/POST/PUT under /api/v1/system/admin/users*). All rows
+	// are system-scope (tenant_id=0); TargetUserID identifies the user
+	// the action was performed on. Password values NEVER appear in
+	// Details — only the fact that a reset happened.
+
+	// AuditActionSystemUserCreated fires when a SystemAdmin creates a
+	// new user account via POST /api/v1/system/admin/users. Details
+	// payload carries {target_email, target_username}.
+	AuditActionSystemUserCreated AuditAction = "system.user_created"
+	// AuditActionSystemUserActivated fires when a SystemAdmin re-enables
+	// a previously-disabled user via PUT /api/v1/system/admin/users/:id/status.
+	// Details payload carries {target_email, target_username}.
+	AuditActionSystemUserActivated AuditAction = "system.user_activated"
+	// AuditActionSystemUserDeactivated fires when a SystemAdmin disables
+	// an active user. The disabled user's outstanding sessions are
+	// revoked server-side; the audit row records the actor and target.
+	AuditActionSystemUserDeactivated AuditAction = "system.user_deactivated"
+	// AuditActionSystemUserPasswordReset fires when a SystemAdmin resets
+	// another user's password via
+	// POST /api/v1/system/admin/users/:id/reset-password. Details payload
+	// carries {target_email, target_username}; the new password itself
+	// is never logged.
+	AuditActionSystemUserPasswordReset AuditAction = "system.user_password_reset"
 )
 
 // AuditOutcome distinguishes successful mutations from middleware-level

@@ -130,13 +130,8 @@ const router = createRouter({
         },
         {
           path: "integrations",
-          redirect: (to) => ({
-            path: "/platform/settings",
-            query: {
-              ...to.query,
-              section: "integrations",
-            },
-          }),
+          name: "integrations",
+          component: () => import("../views/platform/RoutePlaceholder.vue"),
           meta: { requiresInit: true, requiresAuth: true }
         },
         {
@@ -163,10 +158,23 @@ const router = createRouter({
           component: () => import("../views/organization/OrganizationList.vue"),
           meta: { requiresInit: true, requiresAuth: true }
         },
-        // Compatibility redirects for /platform/system/* URLs. System
-        // administration surfaces live as dedicated sections inside the
-        // standard Settings modal; keep stable URLs for bookmarks and
-        // external links.
+        {
+          // SystemAdmin-only user management surface (list / create /
+          // disable / reset password). Gated by meta.requiresSystemAdmin —
+          // the guard in beforeEach bounces non-admins to the knowledge
+          // base list, and the server-side RequireSystemAdmin middleware
+          // is the real authority. Lives as its own platform page (not a
+          // Settings-modal pane) because the user table needs full-width.
+          path: "admin/users",
+          name: "adminUserManagement",
+          component: () => import("../views/admin/UserManagement.vue"),
+          meta: { requiresInit: true, requiresAuth: true, requiresSystemAdmin: true }
+        },
+        // Compatibility redirects for legacy /platform/system/* URLs.
+        // The whole system administration surface — global settings
+        // and the system-admin roster — now lives as a single section
+        // inside the standard Settings modal. We keep the routes
+        // around so old bookmarks / external links don't 404.
         {
           path: "system",
           redirect: { path: "/platform/settings", query: { section: "system-global" } },
@@ -182,12 +190,6 @@ const router = createRouter({
           path: "system/admins",
           name: "systemAdmins",
           redirect: { path: "/platform/settings", query: { section: "system-global" } },
-          meta: { requiresInit: true, requiresAuth: true, requiresSystemAdmin: true },
-        },
-        {
-          path: "system/queues",
-          name: "systemQueues",
-          redirect: { path: "/platform/settings", query: { section: "runtime-queues" } },
           meta: { requiresInit: true, requiresAuth: true, requiresSystemAdmin: true },
         },
       ],
@@ -213,6 +215,7 @@ function persistLoginResponse(authStore: ReturnType<typeof useAuthStore>, respon
     authStore.setTenant({
       id: String(response.tenant.id) || '',
       name: response.tenant.name || '',
+      api_key: response.tenant.api_key || '',
       owner_id: response.user.id || '',
       created_at: response.tenant.created_at || new Date().toISOString(),
       updated_at: response.tenant.updated_at || new Date().toISOString()
@@ -247,6 +250,7 @@ async function hydrateSessionFromToken(authStore: ReturnType<typeof useAuthStore
       authStore.setTenant({
         id: String(tenant.id) || '',
         name: tenant.name || '',
+        api_key: tenant.api_key || '',
         owner_id: tenant.owner_id || user.id || '',
         description: tenant.description,
         status: tenant.status,
