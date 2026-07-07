@@ -2,8 +2,11 @@ package chatpipeline
 
 import (
 	"context"
+	"fmt"
 	"sort"
+	"strings"
 
+	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/searchutil"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
@@ -54,6 +57,7 @@ func (p *PluginMerge) OnEvent(ctx context.Context,
 
 	// Step 1: Select input
 	searchResult := p.selectInputResults(ctx, chatManage)
+	logCandidateSummary(ctx, searchResult, "candidates_input")
 
 	// Step 2: Initial dedup
 	searchResult = p.dedup(ctx, "dedup_summary", searchResult)
@@ -75,6 +79,8 @@ func (p *PluginMerge) OnEvent(ctx context.Context,
 
 	// Step 4: Resolve parent chunks
 	searchResult = p.resolveParentChunks(ctx, chatManage, searchResult)
+	logResultTypes(ctx, searchResult, "after_parent_resolve")
+	logCandidateSummary(ctx, searchResult, "after_parent_resolve")
 
 	// Step 5: Group by knowledge/chunkType and merge overlapping ranges
 	mergedChunks := p.groupAndMergeOverlapping(ctx, searchResult)
@@ -93,6 +99,7 @@ func (p *PluginMerge) OnEvent(ctx context.Context,
 	mergedChunks = removePartialOverlaps(ctx, mergedChunks)
 
 	chatManage.MergeResult = mergedChunks
+	logCandidateSummary(ctx, mergedChunks, "merge_output")
 	return next()
 }
 
@@ -175,9 +182,15 @@ func (p *PluginMerge) groupAndMergeOverlapping(ctx context.Context, results []*t
 	}
 
 	groupResults := ParallelMap(units, 0, func(_ int, u mergeUnit) []*types.SearchResult {
+		var chunksSummary []string
+		for _, c := range u.chunks {
+			chunksSummary = append(chunksSummary, fmt.Sprintf("[%s]id=%s", c.ChunkType, c.ID))
+		}
 		pipelineInfo(ctx, "Merge", "group_process", map[string]interface{}{
 			"knowledge_id": u.knowledgeID,
 			"chunk_cnt":    len(u.chunks),
+			"chunk_types":  u.chunks[0].ChunkType,
+			"chunks":       strings.Join(chunksSummary, ","),
 		})
 
 		sort.Slice(u.chunks, func(i, j int) bool {
@@ -220,6 +233,7 @@ func (p *PluginMerge) resolveParentChunks(
 	if len(results) == 0 || p.chunkRepo == nil {
 		return results
 	}
+	logResultTypes(ctx, results, "resolveParentChunks_in")
 
 	tenantID, _ := types.TenantIDFromContext(ctx)
 	if tenantID == 0 && chatManage != nil {
@@ -262,40 +276,6 @@ func (p *PluginMerge) resolveParentChunks(
 		parentMap[c.ID] = c
 	}
 
-	// Check if any results are image chunks; only then do we need
-	// grandparent resolution and the extra DB round-trip.
-	hasImageResults := false
-	for _, r := range results {
-		if r.ChunkType == string(types.ChunkTypeImageOCR) || r.ChunkType == string(types.ChunkTypeImageCaption) {
-			hasImageResults = true
-			break
-		}
-	}
-
-	var grandparentIDs []string
-	if hasImageResults {
-		// Fetch grandparent chunks for the image → text → parent_text chain.
-		for _, pc := range parentChunks {
-			if pc.ParentChunkID != "" && pc.ChunkType == types.ChunkTypeText {
-				if _, already := parentMap[pc.ParentChunkID]; !already {
-					grandparentIDs = append(grandparentIDs, pc.ParentChunkID)
-				}
-			}
-		}
-		if len(grandparentIDs) > 0 {
-			gpChunks, err := p.chunkRepo.ListChunksByID(ctx, tenantID, grandparentIDs)
-			if err != nil {
-				pipelineWarn(ctx, "Merge", "grandparent_fetch_failed", map[string]interface{}{
-					"error": err.Error(),
-				})
-			} else {
-				for _, c := range gpChunks {
-					parentMap[c.ID] = c
-				}
-			}
-		}
-	}
-
 	// Batch-fetch image_info scoped to matched text children only.
 	textChildIDs := collectScopedTextChildIDs(results, parentMap)
 	var scopedImageInfo map[string]string
@@ -303,78 +283,52 @@ func (p *PluginMerge) resolveParentChunks(
 		scopedImageInfo = searchutil.CollectImageInfoByChunkIDs(ctx, p.chunkRepo, tenantID, textChildIDs)
 	}
 
-	for _, r := range results {
-		if r.ParentChunkID == "" {
-			continue
-		}
+	// Track which chunks were processed and how, for per-chunk summary logging below.
+	type resolveAction struct {
+		chunkID  string
+		chunkType string
+		action   string
+		reason   string
+	}
+	var actions []resolveAction
 
+	for _, r := range results {
 		switch r.ChunkType {
 		case string(types.ChunkTypeText):
-			// text → parent_text: expand to full parent for surrounding context
-			// (the core parent-child value). Scope ImageInfo to this child only so
-			// image-heavy parents do not inject every sibling page's OCR/Caption.
-			parent, ok := parentMap[r.ParentChunkID]
-			if !ok || parent.Content == "" || parent.ChunkType != types.ChunkTypeParentText {
+			if r.ParentChunkID == "" {
+				actions = append(actions, resolveAction{chunkID: r.ID, chunkType: r.ChunkType, action: "skip", reason: "no_parent_chunk_id"})
 				continue
 			}
-			matchStart, matchEnd := r.StartAt, r.EndAt
-			pipelineInfo(ctx, "Merge", "parent_resolve", map[string]interface{}{
-				"child_id":   r.ID,
-				"parent_id":  r.ParentChunkID,
-				"child_len":  runeLen(r.Content),
-				"parent_len": runeLen(parent.Content),
-				"scoped_img": true,
-			})
-			r.Content = searchutil.PruneMarkdownImagesOutsideRange(
-				parent.Content, parent.StartAt, matchStart, matchEnd,
-			)
-			r.StartAt = parent.StartAt
-			r.EndAt = parent.EndAt
+			parent, ok := parentMap[r.ParentChunkID]
+			if !ok || parent.Content == "" || parent.ChunkType != types.ChunkTypeParentText {
+				actions = append(actions, resolveAction{chunkID: r.ID, chunkType: r.ChunkType, action: "skip", reason: fmt.Sprintf("parent_lookup_fail: ok=%v content_empty=%v wrong_type=%v", ok, parent.Content == "", parent.ChunkType != types.ChunkTypeParentText)})
+				continue
+			}
+			// REQ1: child keeps own content — content NOT replaced with parent.
+			// REQ4: image info filtered to child's [StartAt, EndAt] range.
+			origLen := runeLen(r.Content)
 			assignScopedImageInfo(r, scopedImageInfo, r.ID)
 			if r.ImageInfo != "" {
 				r.ImageInfo = searchutil.FilterImageInfoByMatchRange(
-					parent.Content, parent.StartAt, matchStart, matchEnd, r.ImageInfo,
+					parent.Content, parent.StartAt, r.StartAt, r.EndAt, r.ImageInfo,
 				)
 			}
 			if !containsID(r.SubChunkID, r.ID) {
 				r.SubChunkID = append(r.SubChunkID, r.ID)
 			}
+			actions = append(actions, resolveAction{chunkID: r.ID, chunkType: r.ChunkType, action: "text_child→parent", reason: fmt.Sprintf("child_len=%d→%d parent_len=%d img_filtered_range=[%d,%d)", origLen, runeLen(r.Content), runeLen(parent.Content), r.StartAt, r.EndAt)})
 
 		case string(types.ChunkTypeImageOCR), string(types.ChunkTypeImageCaption):
+			// REQ3: image traces to text child, content = text child's content.
 			textParent, ok := parentMap[r.ParentChunkID]
 			if !ok || textParent.Content == "" || textParent.ChunkType != types.ChunkTypeText {
+				actions = append(actions, resolveAction{chunkID: r.ID, chunkType: r.ChunkType, action: "skip", reason: fmt.Sprintf("text_lookup_fail: ok=%v", ok)})
 				continue
 			}
 			hitImageInfo := r.ImageInfo
-			contentSource := textParent
-			if textParent.ParentChunkID != "" {
-				if gp, gpOK := parentMap[textParent.ParentChunkID]; gpOK &&
-					gp.ChunkType == types.ChunkTypeParentText && gp.Content != "" {
-					contentSource = gp
-				}
-			}
-			matchStart := textParent.StartAt
-			matchEnd := textParent.EndAt
-			sliced := searchutil.SliceContentByDocumentRange(
-				contentSource.Content, contentSource.StartAt, matchStart, matchEnd,
-			)
-			if sliced == "" {
-				sliced = textParent.Content
-				matchStart = textParent.StartAt
-				matchEnd = textParent.EndAt
-			}
-			pipelineInfo(ctx, "Merge", "image_parent_resolve", map[string]interface{}{
-				"child_id":   r.ID,
-				"child_type": r.ChunkType,
-				"text_id":    textParent.ID,
-				"parent_id":  contentSource.ID,
-				"match_len":  runeLen(sliced),
-				"parent_len": runeLen(contentSource.Content),
-				"scoped":     true,
-			})
-			r.Content = sliced
-			r.StartAt = matchStart
-			r.EndAt = matchEnd
+			r.Content = textParent.Content
+			r.StartAt = textParent.StartAt
+			r.EndAt = textParent.EndAt
 			assignScopedImageInfo(r, scopedImageInfo, textParent.ID)
 			if r.ImageInfo == "" && hitImageInfo != "" {
 				r.ImageInfo = searchutil.FilterImageInfoByContentURLs(r.Content, hitImageInfo)
@@ -382,7 +336,36 @@ func (p *PluginMerge) resolveParentChunks(
 			if !containsID(r.SubChunkID, r.ID) {
 				r.SubChunkID = append(r.SubChunkID, r.ID)
 			}
+			actions = append(actions, resolveAction{chunkID: r.ID, chunkType: r.ChunkType, action: "image→text_child", reason: fmt.Sprintf("orig_len=%d→%d text_child_id=%s text_len=%d", runeLen(r.Content), runeLen(textParent.Content), r.ParentChunkID, runeLen(textParent.Content))})
+
+		case string(types.ChunkTypeParentSummary):
+			// REQ2: parent_summary → parent full text.
+			parent, ok := parentMap[r.ID]
+			if !ok || parent.Content == "" || parent.ChunkType != types.ChunkTypeParentText {
+				actions = append(actions, resolveAction{chunkID: r.ID, chunkType: r.ChunkType, action: "skip", reason: fmt.Sprintf("parent_lookup_fail_by_id: ok=%v", ok)})
+				continue
+			}
+			r.Content = parent.Content
+			r.StartAt = parent.StartAt
+			r.EndAt = parent.EndAt
+			if !containsID(r.SubChunkID, r.ID) {
+				r.SubChunkID = append(r.SubChunkID, r.ID)
+			}
+			actions = append(actions, resolveAction{chunkID: r.ID, chunkType: r.ChunkType, action: "parent_summary→parent", reason: fmt.Sprintf("content=%d→%d", 0, runeLen(parent.Content))})
+
+		default:
+			// Non-child chunks (parent_text, summary, etc.) pass through unchanged.
+			actions = append(actions, resolveAction{chunkID: r.ID, chunkType: r.ChunkType, action: "passthrough", reason: "no_parent_ref"})
 		}
+	}
+
+	// Log per-chunk resolve decisions for requirement verification.
+	if len(actions) > 0 {
+		var parts []string
+		for _, a := range actions {
+			parts = append(parts, fmt.Sprintf("[%s] id=%s action=%s reason=%s", a.chunkType, a.chunkID, a.action, a.reason))
+		}
+		logger.Infof(ctx, "[Merge/resolveParentChunks] per_chunk_decisions: %s", strings.Join(parts, " | "))
 	}
 
 	return results
@@ -434,4 +417,39 @@ func assignScopedImageInfo(r *types.SearchResult, scoped map[string]string, text
 	if r.ImageInfo != "" {
 		r.ImageInfo = searchutil.FilterImageInfoByContentURLs(r.Content, r.ImageInfo)
 	}
+}
+
+// logResultTypes logs the count of each ChunkType and total content length.
+func logResultTypes(ctx context.Context, results []*types.SearchResult, label string) {
+	if len(results) == 0 {
+		return
+	}
+	typeCount := make(map[string]int)
+	totalLen := 0
+	for _, r := range results {
+		typeCount[r.ChunkType]++
+		totalLen += runeLen(r.Content)
+	}
+	typesStr := ""
+	for t, n := range typeCount {
+		if typesStr != "" {
+			typesStr += ", "
+		}
+		typesStr += fmt.Sprintf("%s=%d", t, n)
+	}
+	logger.Infof(ctx, "[Merge] %s: total=%d types=%s total_content_len=%d", label, len(results), typesStr, totalLen)
+}
+
+// logCandidateSummary logs a per-result summary: ID, ChunkType, content length, parent range, start/end, ParentChunkID.
+func logCandidateSummary(ctx context.Context, results []*types.SearchResult, label string) {
+	if len(results) == 0 {
+		logger.Infof(ctx, "[Merge] %s: (empty)", label)
+		return
+	}
+	var parts []string
+	for _, r := range results {
+		parts = append(parts, fmt.Sprintf("[%s] id=%s len=%d range=[%d,%d] parentID=%s",
+			r.ChunkType, r.ID, runeLen(r.Content), r.StartAt, r.EndAt, r.ParentChunkID))
+	}
+	logger.Infof(ctx, "[Merge] %s: %s", label, fmt.Sprintf("%d chunks: %s", len(parts), parts))
 }

@@ -151,6 +151,26 @@ func (r *chunkRepository) ListChunksByKnowledgeID(
 	return chunks, nil
 }
 
+// ListAllContentChunksByKnowledgeID returns all content-type chunks (text, parent_text, image_ocr, image_caption)
+// for a knowledge document. Used by post-process stages that need the full text content.
+func (r *chunkRepository) ListAllContentChunksByKnowledgeID(
+	ctx context.Context, tenantID uint64, knowledgeID string,
+) ([]*types.Chunk, error) {
+	var chunks []*types.Chunk
+	if err := r.db.WithContext(ctx).
+		Where("tenant_id = ? AND knowledge_id = ? AND chunk_type IN (?, ?, ?, ?)",
+			tenantID, knowledgeID,
+			string(types.ChunkTypeText),
+			string(types.ChunkTypeParentText),
+			string(types.ChunkTypeImageOCR),
+			string(types.ChunkTypeImageCaption)).
+		Order("chunk_index ASC").
+		Find(&chunks).Error; err != nil {
+		return nil, err
+	}
+	return chunks, nil
+}
+
 // ListPagedChunksByKnowledgeID lists chunks for a knowledge ID with pagination
 func (r *chunkRepository) ListPagedChunksByKnowledgeID(
 	ctx context.Context,

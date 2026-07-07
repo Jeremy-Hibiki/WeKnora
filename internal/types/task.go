@@ -29,15 +29,16 @@ const (
 // name "low" so tasks enqueued by older releases remain consumable during a
 // rolling deployment. New code uses the business-semantic constant.
 const (
-	QueueDefault     = "default"
-	QueuePostProcess = "postprocess"
-	QueueSummary     = "summary"
-	QueueMultimodal  = "multimodal"
-	QueueGraph       = "graph"
-	QueueQuestion    = "question"
-	QueueSync        = "sync"
-	QueueMaintenance = "low"
-	QueueWiki        = "wiki"
+	QueueDefault       = "default"
+	QueuePostProcess   = "postprocess"
+	QueueSummary       = "summary"
+	QueueMultimodal    = "multimodal"
+	QueueGraph         = "graph"
+	QueueQuestion      = "question"
+	QueueSync          = "sync"
+	QueueMaintenance   = "low"
+	QueueWiki          = "wiki"
+	QueueParentSummary = "parent_summary" // Isolated lane for high-volume slow parent-summary tasks
 )
 
 // QueueDefinition is the single source of truth for queue topology. Worker
@@ -70,6 +71,7 @@ var queueDefinitions = []QueueDefinition{
 		TypeFAQImport, TypeKBClone, TypeIndexDelete, TypeKBDelete,
 		TypeKnowledgeListDelete, TypeKnowledgeListReparse, TypeKnowledgeMove,
 	}},
+	{Name: QueueParentSummary, Pool: WorkerPoolEnrichment, Weight: 1, SharedWeight: 1, TaskTypes: []string{TypeParentSummaryGeneration}},
 	{Name: QueueWiki, Pool: WorkerPoolWiki, Weight: 1, TaskTypes: []string{TypeWikiIngest, TypeWikiFinalize}},
 }
 
@@ -218,24 +220,25 @@ type WorkerServerStat struct {
 }
 
 const (
-	TypeChunkExtract         = "chunk:extract"
-	TypeDocumentProcess      = "document:process"       // 文档处理任务
-	TypeFAQImport            = "faq:import"             // FAQ导入任务（包含dry run模式）
-	TypeQuestionGeneration   = "question:generation"    // 问题生成任务
-	TypeSummaryGeneration    = "summary:generation"     // 摘要生成任务
-	TypeKBClone              = "kb:clone"               // 知识库复制任务
-	TypeIndexDelete          = "index:delete"           // 索引删除任务
-	TypeKBDelete             = "kb:delete"              // 知识库删除任务
-	TypeKnowledgeListDelete  = "knowledge:list_delete"  // 批量删除知识任务
-	TypeKnowledgeListReparse = "knowledge:list_reparse" // 批量重解析知识任务
-	TypeKnowledgeMove        = "knowledge:move"         // 知识移动任务
-	TypeDataTableSummary     = "datatable:summary"      // 表格摘要任务
-	TypeImageMultimodal      = "image:multimodal"       // 图片多模态处理任务（OCR + VLM Caption）
-	TypeKnowledgePostProcess = "knowledge:post_process" // 知识后处理任务（统一调度）
-	TypeManualProcess        = "manual:process"         // 手工知识更新任务（cleanup + 重新索引）
-	TypeDataSourceSync       = "datasource:sync"        // 数据源同步任务
-	TypeWikiIngest           = "wiki:ingest"            // Wiki 页面同步任务
-	TypeWikiFinalize         = "wiki:finalize"          // Wiki KB 级收尾任务（防抖：索引重建/死链清理/交叉链接）
+	TypeChunkExtract            = "chunk:extract"
+	TypeDocumentProcess         = "document:process"          // 文档处理任务
+	TypeFAQImport               = "faq:import"                // FAQ导入任务（包含dry run模式）
+	TypeQuestionGeneration      = "question:generation"       // 问题生成任务
+	TypeSummaryGeneration       = "summary:generation"        // 摘要生成任务
+	TypeKBClone                 = "kb:clone"                  // 知识库复制任务
+	TypeIndexDelete             = "index:delete"              // 索引删除任务
+	TypeKBDelete                = "kb:delete"                 // 知识库删除任务
+	TypeKnowledgeListDelete     = "knowledge:list_delete"     // 批量删除知识任务
+	TypeKnowledgeListReparse    = "knowledge:list_reparse"    // 批量重解析知识任务
+	TypeKnowledgeMove           = "knowledge:move"            // 知识移动任务
+	TypeDataTableSummary        = "datatable:summary"         // 表格摘要任务
+	TypeImageMultimodal         = "image:multimodal"          // 图片多模态处理任务（OCR + VLM Caption）
+	TypeKnowledgePostProcess    = "knowledge:post_process"    // 知识后处理任务（统一调度）
+	TypeManualProcess           = "manual:process"            // 手工知识更新任务（cleanup + 重新索引）
+	TypeDataSourceSync          = "datasource:sync"           // 数据源同步任务
+	TypeWikiIngest              = "wiki:ingest"               // Wiki 页面同步任务
+	TypeWikiFinalize            = "wiki:finalize"             // Wiki KB 级收尾任务（防抖：索引重建/死链清理/交叉链接）
+	TypeParentSummaryGeneration = "parent_summary:generation" // Parent chunk 摘要生成任务
 )
 
 // ExtractChunkPayload represents the extract chunk task payload
@@ -475,6 +478,20 @@ type KnowledgePostProcessPayload struct {
 	KnowledgeBaseID string `json:"knowledge_base_id"`
 	Language        string `json:"language,omitempty"` // Request locale for {{language}} in prompt templates
 	Attempt         int    `json:"attempt,omitempty"`
+}
+
+// ParentSummaryGenerationPayload represents the parent chunk summary generation task payload.
+// On enqueue, parent chunks are grouped into batches of 20, one task per batch, enqueued
+// to QueueParentSummary to avoid cascade-blockage with other fan-out tasks.
+type ParentSummaryGenerationPayload struct {
+	TracingContext
+	TenantID        uint64   `json:"tenant_id"`
+	KnowledgeBaseID string   `json:"knowledge_base_id"`
+	KnowledgeID     string   `json:"knowledge_id"`
+	Language        string   `json:"language,omitempty"`    // Request locale for {{language}} in prompt templates
+	ParentChunkIDs  []string `json:"parent_chunk_ids"`      // Batch of parent chunks to generate summaries for
+	Attempt         int      `json:"attempt,omitempty"`     // Links this task to the parent parse attempt
+	BatchIndex      int      `json:"batch_index,omitempty"` // 0-based ordinal of this batch
 }
 
 // KBCloneTaskStatus represents the status of a knowledge base clone task

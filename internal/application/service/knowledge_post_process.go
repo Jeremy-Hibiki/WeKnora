@@ -127,16 +127,17 @@ func (s *KnowledgePostProcessService) Handle(ctx context.Context, task *asynq.Ta
 	processOverrides, _ := knowledge.ProcessOverrides()
 	eff := ResolveProcessConfig(kb, processOverrides)
 
-	// 2. Fetch all chunks
-	chunks, err := s.chunkService.ListChunksByKnowledgeID(ctx, payload.KnowledgeID)
+	// 2. Fetch all content-type chunks (text, parent_text, image_ocr, image_caption)
+	chunks, err := s.chunkService.ListAllContentChunksByKnowledgeID(ctx, payload.KnowledgeID)
 	if err != nil {
 		return fmt.Errorf("list chunks for knowledge %s: %w", payload.KnowledgeID, err)
 	}
 
-	// Gather all text-like chunks (including newly added OCR and Caption from multimodal tasks)
+	// Gather all text-like chunks (including parent_text, OCR, and Caption from multimodal tasks)
 	var textChunks []*types.Chunk
 	for _, c := range chunks {
-		if c.ChunkType == types.ChunkTypeText || c.ChunkType == types.ChunkTypeImageOCR || c.ChunkType == types.ChunkTypeImageCaption {
+		if c.ChunkType == types.ChunkTypeText || c.ChunkType == types.ChunkTypeParentText ||
+			c.ChunkType == types.ChunkTypeImageOCR || c.ChunkType == types.ChunkTypeImageCaption {
 			textChunks = append(textChunks, c)
 		}
 	}
@@ -160,6 +161,29 @@ func (s *KnowledgePostProcessService) Handle(ctx context.Context, task *asynq.Ta
 	willSpawnQuestion := willSpawnSummary && kb.NeedsEmbeddingModel() &&
 		eff.QuestionGenerationConfig.Enabled
 	willSpawnWiki := kb.IndexingStrategy.WikiEnabled && len(textChunks) > 0
+
+	// Parent summary generation: spawn one subtask per batch of parent chunks
+	willSpawnParentSummary := kb.SummaryModelID != "" && len(textChunks) > 0
+	logger.Infof(ctx, "[PP-debug] parent_summary: kbID=%s kb.SummaryModelID=%q len(textChunks)=%d len(parentChunks_before)=%d len(chunks)=%d willSpawn=%v",
+		kb.ID, kb.SummaryModelID, len(textChunks), 0, len(chunks), willSpawnParentSummary)
+
+	// Collect parent chunks (ChunkTypeParentText)
+	var parentChunks []*types.Chunk
+	if willSpawnParentSummary {
+		for _, c := range textChunks {
+			if c.ChunkType == types.ChunkTypeParentText {
+				parentChunks = append(parentChunks, c)
+			}
+		}
+		logger.Infof(ctx, "[PP-debug] collected parentChunks: count=%d", len(parentChunks))
+	}
+
+	// Parent summary generation is batched: one subtask per batch of 20 parent chunks
+	const parentSummaryGenBatchSize = 20
+	parentSummaryBatchCount := 0
+	if willSpawnParentSummary && len(parentChunks) > 0 {
+		parentSummaryBatchCount = (len(parentChunks) + parentSummaryGenBatchSize - 1) / parentSummaryGenBatchSize
+	}
 
 	// Question generation now fans out one subtask per plain text chunk
 	// (mirroring the graph-extract per-chunk pattern) so each chunk's LLM
@@ -199,6 +223,9 @@ func (s *KnowledgePostProcessService) Handle(ctx context.Context, task *asynq.Ta
 		expectedSubtasks++
 	}
 	expectedSubtasks += graphChunkCount
+	if willSpawnParentSummary {
+		expectedSubtasks += parentSummaryBatchCount
+	}
 
 	// enteredFinalizing is set only when SetFinalizing actually seeded the
 	// counter (the promoted branch below). It gates the reconciliation that
@@ -306,7 +333,13 @@ func (s *KnowledgePostProcessService) Handle(ctx context.Context, task *asynq.Ta
 				})
 			}
 			enqueuedQuestionCount = s.enqueueQuestionGenerationTasks(ctx, payload, eff.QuestionGenerationConfig, attempt, questionChunks)
-		}
+	}
+	}
+
+	// 4b. Spawn Parent Summary Generation Tasks
+	enqueuedParentSummaryCount := 0
+	if willSpawnParentSummary && len(parentChunks) > 0 {
+		enqueuedParentSummaryCount = s.enqueueParentSummaryGenerationTasks(ctx, payload, attempt, parentChunks)
 	}
 
 	// 5. Spawn Graph RAG Tasks — only when graph indexing is enabled in IndexingStrategy
@@ -365,11 +398,11 @@ func (s *KnowledgePostProcessService) Handle(ctx context.Context, task *asynq.Ta
 	// "finalizing". The bound is per-call (matches the helper) so a wedged
 	// connection can't pin the goroutine for the whole serial loop.
 	if enteredFinalizing {
-		plannedOwned := questionBatchCount + graphChunkCount
+		plannedOwned := questionBatchCount + graphChunkCount + parentSummaryBatchCount
 		if willSpawnSummary {
 			plannedOwned++
 		}
-		actualOwned := enqueuedQuestionCount + enqueuedGraphCount
+		actualOwned := enqueuedQuestionCount + enqueuedGraphCount + enqueuedParentSummaryCount
 		if enqueuedSummary {
 			actualOwned++
 		}
@@ -399,6 +432,8 @@ func (s *KnowledgePostProcessService) Handle(ctx context.Context, task *asynq.Ta
 		"enqueued_wiki":           enqueuedWiki,
 		"enqueued_graph":          enqueuedGraphCount > 0,
 		"enqueued_graph_count":    enqueuedGraphCount,
+		"enqueued_parent_summary": enqueuedParentSummaryCount > 0,
+		"enqueued_parent_summary_count": enqueuedParentSummaryCount,
 	}
 	s.tracker().EndSpan(ctx, postSpan, postOutput)
 	// Close the root span — the parse pipeline is done. Async
@@ -449,6 +484,11 @@ func (s *KnowledgePostProcessService) enqueueSummaryGenerationTask(ctx context.C
 // preserving per-batch retry / cancellation granularity and letting each task
 // do one embedding BatchIndex over the whole batch.
 const questionGenChunkBatchSize = 20
+
+// parentSummaryGenBatchSize is the number of parent chunks handled by a single
+// parent-summary-generation task. Same batch size as question generation for
+// consistency.
+const parentSummaryGenBatchSize = 20
 
 // postprocessQuestionGroupSpanName is the grouping span the per-batch
 // question subspans (postprocess.question.batch[i]) nest under, so the trace
@@ -539,5 +579,65 @@ func (s *KnowledgePostProcessService) enqueueQuestionGenerationTasks(
 	}
 	logger.Infof(ctx, "[KnowledgePostProcess] Enqueued %d question generation batch tasks (%d chunks, batch_size=%d) for %s (count=%d)",
 		enqueued, total, questionGenChunkBatchSize, payload.KnowledgeID, questionCount)
+	return enqueued
+}
+
+// enqueueParentSummaryGenerationTasks fans out one TypeParentSummaryGeneration task per
+// batch of parentSummaryGenBatchSize parent chunks. Each task carries only chunk ids
+// so the payload stays small and the worker reads fresh content at run time.
+//
+// Returns the number of batch tasks successfully enqueued.
+func (s *KnowledgePostProcessService) enqueueParentSummaryGenerationTasks(
+	ctx context.Context,
+	payload types.KnowledgePostProcessPayload,
+	attempt int,
+	parentChunks []*types.Chunk,
+) int {
+	if s.taskEnqueuer == nil || len(parentChunks) == 0 {
+		logger.Infof(ctx, "[PP-debug] enqueue early exit: taskEnqueuer nil? %v, parentChunks %d", s.taskEnqueuer == nil, len(parentChunks))
+		return 0
+	}
+
+	total := len(parentChunks)
+	enqueued := 0
+	batchIndex := 0
+	for start := 0; start < total; start += parentSummaryGenBatchSize {
+		end := start + parentSummaryGenBatchSize
+		if end > total {
+			end = total
+		}
+		batch := parentChunks[start:end]
+		parentIDs := make([]string, len(batch))
+		for i, c := range batch {
+			parentIDs[i] = c.ID
+		}
+
+		taskPayload := types.ParentSummaryGenerationPayload{
+			TenantID:        payload.TenantID,
+			KnowledgeBaseID: payload.KnowledgeBaseID,
+			KnowledgeID:     payload.KnowledgeID,
+			Language:        payload.Language,
+			Attempt:         attempt,
+			ParentChunkIDs:  parentIDs,
+			BatchIndex:      batchIndex,
+		}
+		batchIndex++
+
+		langfuse.InjectTracing(ctx, &taskPayload)
+		payloadBytes, err := json.Marshal(taskPayload)
+		if err != nil {
+			logger.Warnf(ctx, "[KnowledgePostProcess] Failed to marshal parent summary generation payload for batch %d: %v", batchIndex-1, err)
+			continue
+		}
+
+		task := asynq.NewTask(types.TypeParentSummaryGeneration, payloadBytes, asynq.Queue(types.QueueParentSummary), asynq.MaxRetry(3))
+		if _, err := s.taskEnqueuer.Enqueue(task); err != nil {
+			logger.Warnf(ctx, "[KnowledgePostProcess] Failed to enqueue parent summary generation batch %d for %s: %v", batchIndex-1, payload.KnowledgeID, err)
+			continue
+		}
+		enqueued++
+	}
+	logger.Infof(ctx, "[KnowledgePostProcess] Enqueued %d parent summary generation batch tasks (%d chunks, batch_size=%d) for %s",
+		enqueued, total, parentSummaryGenBatchSize, payload.KnowledgeID)
 	return enqueued
 }
