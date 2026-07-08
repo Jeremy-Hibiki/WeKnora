@@ -1496,12 +1496,26 @@ const handleConfirmFolderMove = async (targetFolderId: string | null) => {
       // Also move knowledge entries if any.
       if (batchMoveKnowledgeIds.value.length > 0) {
         await batchMoveKnowledgeToFolder({ knowledge_ids: batchMoveKnowledgeIds.value, folder_id: targetFolderId });
+        batchMoveKnowledgeIds.value = [];
       }
       MessagePlugin.success(t('knowledgeFolder.moveFolderSuccess'));
       resetPage();
       await loadKnowledgeFiles(kbId.value);
     } catch (err) {
       const message = (err as { message?: string })?.message || t('knowledgeFolder.moveFolderFailed');
+      MessagePlugin.error(message);
+    }
+  } else if (batchMoveKnowledgeIds.value.length > 0) {
+    // Only knowledge entries selected, no folders.
+    const ids = batchMoveKnowledgeIds.value;
+    batchMoveKnowledgeIds.value = [];
+    try {
+      await batchMoveKnowledgeToFolder({ knowledge_ids: ids, folder_id: targetFolderId });
+      MessagePlugin.success(t('knowledgeBase.moveToFolderSuccess'));
+      resetPage();
+      await loadKnowledgeFiles(kbId.value);
+    } catch (err) {
+      const message = (err as { message?: string })?.message || t('knowledgeBase.moveToFolderFailed');
       MessagePlugin.error(message);
     }
   }
