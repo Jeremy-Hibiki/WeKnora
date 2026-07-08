@@ -82,14 +82,23 @@ const isChatDropRoute = () => {
 }
 
 const collectDroppedFiles = async (event: DragEvent): Promise<File[]> => {
-    const dataTransferFiles = event.dataTransfer?.files ? Array.from(event.dataTransfer.files) : [];
-    if (dataTransferFiles.length > 0) {
-        return dataTransferFiles;
+    const dataTransfer = event.dataTransfer;
+    if (!dataTransfer) return [];
+
+    // IMPORTANT: DataTransferItemList is invalidated once the drop event handler
+    // returns, so we must read webkitGetAsEntry() SYNCHRONOUSLY here (before the
+    // first await) and only then kick off the async file reads.
+    const items = dataTransfer.items ? Array.from(dataTransfer.items) : [];
+    const entries: FileSystemEntry[] = [];
+    for (const item of items) {
+        const entry = (item as unknown as { webkitGetAsEntry?: () => FileSystemEntry | null }).webkitGetAsEntry?.();
+        if (entry) entries.push(entry);
     }
 
-    const dataTransferItems = event.dataTransfer?.items ? Array.from(event.dataTransfer.items) : [];
-    if (dataTransferItems.length === 0) {
-        return [];
+    // No entry API (or empty) → fall back to dataTransfer.files. Some browsers
+    // populate .files with the folder's contained File objects directly.
+    if (entries.length === 0) {
+        return dataTransfer.files ? Array.from(dataTransfer.files) : [];
     }
 
     // Recursively walk directory entries so dropping a whole folder works.
@@ -100,7 +109,6 @@ const collectDroppedFiles = async (event: DragEvent): Promise<File[]> => {
             if (entry.isFile) {
                 const fileEntry = entry as FileSystemFileEntry;
                 fileEntry.file((file: File) => {
-                    // Attach the relative path so the upload flow can build folders.
                     try {
                         Object.defineProperty(file, 'webkitRelativePath', {
                             value: prefix + file.name,
@@ -116,19 +124,19 @@ const collectDroppedFiles = async (event: DragEvent): Promise<File[]> => {
             if (entry.isDirectory) {
                 const dirReader = (entry as FileSystemDirectoryEntry).createReader();
                 const dirPath = prefix + entry.name + '/';
+                const allDirFiles: File[] = [];
                 const readBatch = (): void => {
-                    dirReader.readEntries(async (entries: FileSystemEntry[]) => {
-                        if (entries.length === 0) {
+                    dirReader.readEntries(async (batchEntries: FileSystemEntry[]) => {
+                        if (batchEntries.length === 0) {
                             resolve(allDirFiles);
                             return;
                         }
-                        const batch = await Promise.all(entries.map(e => traverseEntry(e, dirPath)));
+                        const batch = await Promise.all(batchEntries.map(e => traverseEntry(e, dirPath)));
                         for (const f of batch.flat()) allDirFiles.push(f);
                         // readEntries returns in batches of ≤100; keep reading until empty.
                         readBatch();
                     }, () => resolve(allDirFiles));
                 };
-                const allDirFiles: File[] = [];
                 readBatch();
                 return;
             }
@@ -136,18 +144,8 @@ const collectDroppedFiles = async (event: DragEvent): Promise<File[]> => {
         });
     };
 
-    const files = await Promise.all(dataTransferItems.map(item => new Promise<File[]>(async (resolve) => {
-        const entry = (item as unknown as { webkitGetAsEntry?: () => FileSystemEntry | null }).webkitGetAsEntry?.();
-        if (entry) {
-            resolve(await traverseEntry(entry, ''));
-            return;
-        }
-        // Fallback: item is a plain file.
-        const f = item.getAsFile();
-        resolve(f ? [f] : []);
-    })));
-
-    return files.flat().filter((file): file is File => file instanceof File);
+    const filesPerEntry = await Promise.all(entries.map(e => traverseEntry(e, '')));
+    return filesPerEntry.flat().filter((file): file is File => file instanceof File);
 }
 
 // 检查知识库初始化状态
