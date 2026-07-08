@@ -45,6 +45,8 @@ import FAQEntryManager from './components/FAQEntryManager.vue';
 import DocumentListView from './components/DocumentListView.vue';
 import DocumentCardView from './components/DocumentCardView.vue';
 import DocumentBatchBar from './components/DocumentBatchBar.vue';
+import IconButton from '@/components/IconButton.vue';
+import IconButtonGroup from '@/components/IconButtonGroup.vue';
 import KbUploadSourceDropdown from './components/KbUploadSourceDropdown.vue';
 import TagEditDialog from './components/TagEditDialog.vue';
 import KbTagManageDrawer from './components/KbTagManageDrawer.vue';
@@ -2698,41 +2700,17 @@ async function createNewSession(value: string): Promise<void> {
                   </t-date-range-picker>
                 </div>
                 </div>
-                <div class="doc-filter-bar__trailing">
-                  <div class="doc-view-toggle" role="group" :aria-label="$t('knowledgeBase.viewModeToggle')">
-                    <t-tooltip :content="$t('knowledgeBase.viewModeGrid')" placement="top">
-                      <button type="button" class="doc-view-toggle-btn" :class="{ active: viewMode === 'grid' }"
-                        @click="viewMode = 'grid'" :aria-pressed="viewMode === 'grid'">
-                        <t-icon name="view-module" size="16px" />
-                      </button>
-                    </t-tooltip>
-                    <t-tooltip :content="$t('knowledgeBase.viewModeList')" placement="top">
-                      <button type="button" class="doc-view-toggle-btn" :class="{ active: viewMode === 'list' }"
-                        @click="viewMode = 'list'" :aria-pressed="viewMode === 'list'">
-                        <t-icon name="view-list" size="16px" />
-                      </button>
-                    </t-tooltip>
-                  </div>
-                  <div v-if="canEdit" class="doc-filter-actions">
-                    <t-tooltip :content="$t('knowledgeFolder.createFolder')" placement="top">
-                      <button type="button" class="content-bar-icon-btn" @click="handleCreateFolder">
-                        <t-icon name="folder-add" size="16px" />
-                      </button>
-                    </t-tooltip>
-                    <KbUploadSourceDropdown ref="uploadSourceRef" :accept-file-types="acceptFileTypes"
-                      :supported-file-types="[...supportedFileTypes]" include-manual trigger-icon="file-add"
-                      trigger-class="content-bar-icon-btn" data-guide="kb-detail-add-doc"
-                      :tooltip="t('knowledgeBase.addDocument')" placement="bottom-right" @files="handleUploadSourceFiles"
-                      @url="handleUploadSourceUrl" @manual="handleManualCreate" />
-                  </div>
-                </div>
-                <div class="doc-filter-actions">
-                  <t-tooltip :content="$t('knowledgeBase.refresh')" placement="top">
-                    <button type="button" class="content-bar-icon-btn" @click="handleRefresh">
-                      <t-icon name="refresh" size="16px" />
-                    </button>
-                  </t-tooltip>
-                </div>
+                <IconButtonGroup v-if="canEdit">
+                  <IconButton :icon="'folder-add'" :tooltip="$t('knowledgeFolder.createFolder')" @click="handleCreateFolder" />
+                  <KbUploadSourceDropdown ref="uploadSourceRef" :accept-file-types="acceptFileTypes"
+                    :supported-file-types="[...supportedFileTypes]" include-manual trigger-icon="file-add"
+                    data-guide="kb-detail-add-doc"
+                    :tooltip="t('knowledgeBase.addDocument')" placement="bottom-right" @files="handleUploadSourceFiles"
+                    @url="handleUploadSourceUrl" @manual="handleManualCreate" />
+                </IconButtonGroup>
+                <IconButtonGroup>
+                  <IconButton :icon="'refresh'" :tooltip="$t('knowledgeBase.refresh')" @click="handleRefresh" />
+                </IconButtonGroup>
               </div>
               <div class="doc-scroll-container"
                 :class="{ 'is-empty': !displayCardList.length && !docListLoading, 'is-marquee-active': docMarqueeVisible }"
@@ -3439,24 +3417,6 @@ async function createNewSession(value: string): Promise<void> {
         background: var(--td-bg-color-container, #fff);
         color: var(--td-brand-color, #0052d9);
         box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
-      }
-    }
-  }
-
-  .doc-filter-actions {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    flex-shrink: 0;
-
-    :deep(.content-bar-icon-btn) {
-      color: var(--td-text-color-secondary);
-      background: transparent;
-      border: none;
-
-      &:hover {
-        color: var(--td-brand-color);
-        background: var(--td-bg-color-secondarycontainer);
       }
     }
   }
