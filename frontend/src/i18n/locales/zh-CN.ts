@@ -423,6 +423,8 @@ export default {
     uploadPartialSuccess: "上传完成：成功 {success} 个，失败 {fail} 个",
     uploadAllFailed: "所有文件上传失败",
     uploadingFolder: "正在上传文件夹中的 {total} 个文件...",
+    uploadingZip: "正在解压并上传压缩包 {name}...",
+    folderUploadPartial: "文件夹上传完成：成功 {uploaded} 个，跳过 {skipped} 个，失败 {errors} 个",
     uploadingValidFiles: "正在上传 {valid}/{total} 个有效文件...",
     noValidFiles: "没有有效的文件",
     noValidFilesInFolder: "文件夹中的 {total} 个文件均不支持",
@@ -3222,6 +3224,7 @@ export default {
   upload: {
     uploadDocument: "上传文档",
     uploadFolder: "上传文件夹",
+    uploadZip: "上传压缩包",
     onlineEdit: "在线编辑",
     deleteRecord: "删除记录",
   },

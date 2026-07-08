@@ -412,6 +412,12 @@ func (h *KnowledgeHandler) CreateKnowledgeFromFile(c *gin.Context) {
 	var folderIDPtr *string
 	if folderID != "" {
 		folderIDPtr = &folderID
+		// Validate that the folder belongs to this KB/tenant before trusting it.
+		// The FK only guarantees existence, not ownership.
+		if err := h.folderService.ValidateFolderOwnership(ctx, effectiveTenantID, kbID, folderIDPtr); err != nil {
+			c.Error(errors.NewBadRequestError("folder does not belong to this knowledge base"))
+			return
+		}
 	}
 
 	// Create knowledge entry from the file
@@ -510,6 +516,14 @@ func (h *KnowledgeHandler) CreateKnowledgeFromURL(c *gin.Context) {
 		secutils.SanitizeForLog(kbID),
 		secutils.SanitizeForLog(req.URL),
 	)
+
+	// Validate folder ownership before trusting the client-supplied folder_id.
+	if req.FolderID != nil && *req.FolderID != "" {
+		if err := h.folderService.ValidateFolderOwnership(ctx, effectiveTenantID, kbID, req.FolderID); err != nil {
+			c.Error(errors.NewBadRequestError("folder does not belong to this knowledge base"))
+			return
+		}
+	}
 
 	// Create knowledge entry from the URL
 	knowledge, err := h.kgService.CreateKnowledgeFromURL(

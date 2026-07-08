@@ -9,14 +9,15 @@ import (
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
 // knowledgeFolderService implements interfaces.KnowledgeFolderService.
 type knowledgeFolderService struct {
-	repo    interfaces.KnowledgeFolderRepository
-	kgRepo  interfaces.KnowledgeRepository
-	db      *gorm.DB
+	repo   interfaces.KnowledgeFolderRepository
+	kgRepo interfaces.KnowledgeRepository
+	db     *gorm.DB
 }
 
 // NewKnowledgeFolderService creates a new knowledge folder service.
@@ -271,41 +272,11 @@ func (s *knowledgeFolderService) DeleteFolder(ctx context.Context, id string, fo
 		return repository.ErrFolderNotEmpty
 	}
 
-	// Use transaction for force deletion
 	if force && (len(children) > 0 || knowledgeCount > 0) {
+		// Cascade-delete atomically: the repo reads descendants, unlinks knowledge,
+		// and deletes the subtree all within `tx` (no reads leak outside the txn).
 		err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-			// Get all descendant folders
-			descendants, err := s.repo.GetDescendants(ctx, id)
-			if err != nil {
-				return err
-			}
-
-			// Collect all folder IDs (including self)
-			allFolderIDs := make([]string, 0, len(descendants)+1)
-			for _, d := range descendants {
-				allFolderIDs = append(allFolderIDs, d.ID)
-			}
-			allFolderIDs = append(allFolderIDs, id)
-
-			// Move knowledge entries in all these folders to root
-			if err := tx.Model(&types.Knowledge{}).
-				Where("folder_id IN ?", allFolderIDs).
-				Update("folder_id", nil).Error; err != nil {
-				return err
-			}
-
-			// Delete descendant folders first (reverse depth order to avoid FK issues)
-			for i := len(descendants) - 1; i >= 0; i-- {
-				if err := tx.Where("id = ?", descendants[i].ID).Delete(&types.KnowledgeFolder{}).Error; err != nil {
-					return err
-				}
-			}
-
-			// Delete the folder itself
-			if err := tx.Where("id = ?", id).Delete(&types.KnowledgeFolder{}).Error; err != nil {
-				return err
-			}
-			return nil
+			return s.repo.ForceDeleteSubtree(ctx, tx, tenantID, id)
 		})
 		if err != nil {
 			return err
@@ -320,88 +291,97 @@ func (s *knowledgeFolderService) DeleteFolder(ctx context.Context, id string, fo
 	return nil
 }
 
-// MoveFolder moves a folder to a new parent.
+// MoveFolder moves a folder to a new parent. All reads and writes run inside a
+// single transaction so the cycle/name checks are atomic with the move itself,
+// eliminating the TOCTOU race where two concurrent moves both pass the checks and
+// then form a cycle. The source and target rows are locked (SELECT ... FOR UPDATE
+// on PostgreSQL) so a concurrent move on the same subtree blocks until this txn
+// commits.
 func (s *knowledgeFolderService) MoveFolder(
 	ctx context.Context,
 	id string,
 	req *types.MoveFolderRequest,
 ) (*types.KnowledgeFolder, error) {
 	tenantID := types.MustTenantIDFromContext(ctx)
-	folder, err := s.repo.GetByID(ctx, tenantID, id)
-	if err != nil {
-		return nil, err
-	}
 
-	// Prevent moving to self
-	if req.TargetParentFolderID != nil && *req.TargetParentFolderID == id {
-		return nil, repository.ErrCircularReference
-	}
+	var (
+		kbIDForLog string
+		name       string
+		oldPath    string
+		newPath    string
+	)
 
-	// Calculate new path and depth
-	var newParentPath string
-	var newDepth int = 1
-	if req.TargetParentFolderID != nil && *req.TargetParentFolderID != "" {
-		targetParent, err := s.repo.GetByID(ctx, tenantID, *req.TargetParentFolderID)
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Lock the source folder.
+		folder, err := s.repo.GetByIDForUpdate(ctx, tx, tenantID, id)
 		if err != nil {
-			return nil, err
+			return err
 		}
-		// Prevent circular reference: target must not be a descendant of source
-		descendants, err := s.repo.GetDescendants(ctx, id)
-		if err != nil {
-			return nil, err
+		kbIDForLog = folder.KnowledgeBaseID
+		name = folder.Name
+		oldPath = folder.Path
+		oldDepth := folder.Depth
+
+		if req.TargetParentFolderID != nil && *req.TargetParentFolderID == id {
+			return repository.ErrCircularReference
 		}
-		for _, d := range descendants {
-			if d.ID == *req.TargetParentFolderID {
-				return nil, repository.ErrCircularReference
+
+		var newParentPath string
+		newDepth := 1
+		if req.TargetParentFolderID != nil && *req.TargetParentFolderID != "" {
+			targetParent, err := s.repo.GetByIDForUpdate(ctx, tx, tenantID, *req.TargetParentFolderID)
+			if err != nil {
+				return err
 			}
+			if targetParent.KnowledgeBaseID != folder.KnowledgeBaseID {
+				return repository.ErrCircularReference
+			}
+			// Cycle check: target must not be the source or one of its descendants.
+			descendants, err := s.repo.GetDescendantsInTx(ctx, tx, tenantID, id)
+			if err != nil {
+				return err
+			}
+			for _, d := range descendants {
+				if d.ID == *req.TargetParentFolderID {
+					return repository.ErrCircularReference
+				}
+			}
+			if targetParent.Depth >= types.MaxFolderDepth {
+				return repository.ErrMaxDepthExceeded
+			}
+			newParentPath = targetParent.Path
+			newDepth = targetParent.Depth + 1
+		} else {
+			newParentPath = "/"
+			newDepth = 1
 		}
-		if targetParent.Depth >= types.MaxFolderDepth {
-			return nil, repository.ErrMaxDepthExceeded
-		}
-		newParentPath = targetParent.Path
-		newDepth = targetParent.Depth + 1
-	} else {
-		newParentPath = "/"
-		newDepth = 1
-	}
 
-	// Check name uniqueness in target parent
-	exists, err := s.repo.CheckNameExists(ctx, tenantID, folder.KnowledgeBaseID,
-		req.TargetParentFolderID, folder.Name, id)
-	if err != nil {
-		return nil, err
-	}
-	if exists {
-		return nil, repository.ErrFolderNameExists
-	}
-
-	oldPath := folder.Path
-	oldDepth := folder.Depth
-	newPath := newParentPath + folder.ID + "/"
-	depthDelta := newDepth - oldDepth
-
-	// Execute in transaction: update self + batch update descendants
-	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := s.repo.Move(ctx, id, req.TargetParentFolderID, newPath, newDepth); err != nil {
+		// Name uniqueness check inside the transaction.
+		exists, err := s.repo.CheckNameExistsInTx(ctx, tx, tenantID, folder.KnowledgeBaseID,
+			req.TargetParentFolderID, folder.Name, id)
+		if err != nil {
 			return err
 		}
-		if err := s.repo.BatchUpdateDescendantPaths(ctx, oldPath, newPath, depthDelta); err != nil {
-			return err
+		if exists {
+			return repository.ErrFolderNameExists
 		}
-		return nil
+
+		newPath = newParentPath + folder.ID + "/"
+		depthDelta := newDepth - oldDepth
+		return s.repo.MoveSubtree(ctx, tx, tenantID, id, req.TargetParentFolderID, newPath, newDepth, oldPath, depthDelta)
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	// Reload the updated folder
+	// Reload the updated folder.
 	updated, err := s.repo.GetByID(ctx, tenantID, id)
 	if err != nil {
 		return nil, err
 	}
 
-	logger.Infof(ctx, "[Folder] Moved folder %s (id=%s) from %s to %s",
-		folder.Name, folder.ID, oldPath, newPath)
+	logger.Infof(ctx, "[Folder] Moved folder %s (id=%s, kb=%s) from %s to %s",
+		name, id, kbIDForLog, oldPath, newPath)
 	return updated, nil
 }
 
@@ -443,3 +423,131 @@ func (s *knowledgeFolderService) GetBreadcrumb(
 	breadcrumb = append(breadcrumb, folder)
 	return breadcrumb, nil
 }
+
+// ValidateFolderOwnership returns nil iff folderID belongs to (tenantID, kbID).
+// A nil/empty folderID means "root" and is always valid. This is the ownership
+// gate that CreateKnowledgeFromFile/URL and MoveToFolder/BatchMoveToFolder must
+// call before trusting a client-supplied folder_id — the FK only guarantees the
+// folder exists, not that it belongs to the caller's KB/tenant.
+func (s *knowledgeFolderService) ValidateFolderOwnership(
+	ctx context.Context,
+	tenantID uint64,
+	kbID string,
+	folderID *string,
+) error {
+	if folderID == nil || *folderID == "" {
+		return nil // root
+	}
+	folder, err := s.repo.GetByID(ctx, tenantID, *folderID)
+	if err != nil {
+		return err
+	}
+	if folder.KnowledgeBaseID != kbID {
+		return repository.ErrFolderNotFound
+	}
+	return nil
+}
+
+// EnsureFolderPath creates any missing folders along a slash-separated relative
+// path (e.g. "docs/api/v2") rooted at parentFolderID (nil = KB root) and returns
+// the leaf folder. Existing segments are reused (skip conflict policy). The whole
+// walk runs inside a single transaction with the root locked, so concurrent uploads
+// cannot create duplicate folders. Backslashes are normalized to slashes; empty
+// segments and "."/".." are dropped for path-traversal safety.
+func (s *knowledgeFolderService) EnsureFolderPath(
+	ctx context.Context,
+	kbID string,
+	parentFolderID *string,
+	relativePath string,
+) (*types.KnowledgeFolder, error) {
+	tenantID := types.MustTenantIDFromContext(ctx)
+
+	// Normalize segments.
+	raw := strings.Split(strings.ReplaceAll(relativePath, "\\", "/"), "/")
+	segments := make([]string, 0, len(raw))
+	for _, seg := range raw {
+		seg = strings.TrimSpace(seg)
+		if seg == "" || seg == "." || seg == ".." {
+			continue
+		}
+		segments = append(segments, seg)
+	}
+	if len(segments) == 0 {
+		if parentFolderID != nil && *parentFolderID != "" {
+			return s.repo.GetByID(ctx, tenantID, *parentFolderID)
+		}
+		return nil, nil
+	}
+
+	var leafID string
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Resolve + lock the starting parent.
+		var (
+			parentPath  string
+			parentDepth int
+			parentID    *string = parentFolderID
+		)
+		if parentFolderID != nil && *parentFolderID != "" {
+			p, err := s.repo.GetByIDForUpdate(ctx, tx, tenantID, *parentFolderID)
+			if err != nil {
+				return err
+			}
+			if p.KnowledgeBaseID != kbID {
+				return repository.ErrFolderNotFound
+			}
+			parentPath = p.Path
+			parentDepth = p.Depth
+		} else {
+			parentPath = "/"
+			parentDepth = 0
+		}
+
+		for _, seg := range segments {
+			depth := parentDepth + 1
+			if depth > types.MaxFolderDepth {
+				return repository.ErrMaxDepthExceeded
+			}
+			// Reuse an existing same-named child if present (skip-on-conflict).
+			existing, err := s.repo.GetChildByNameInTx(ctx, tx, tenantID, kbID, parentID, seg)
+			if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+				return err
+			}
+			if existing != nil {
+				parentID = &existing.ID
+				parentPath = existing.Path
+				parentDepth = existing.Depth
+				leafID = existing.ID
+				continue
+			}
+			// Create the missing folder.
+			folder := &types.KnowledgeFolder{
+				TenantID:        tenantID,
+				KnowledgeBaseID: kbID,
+				Name:            seg,
+				ParentFolderID:  parentID,
+				Depth:           depth,
+			}
+			folder.ID = uuid.New().String()
+			folder.Path = parentPath + folder.ID + "/"
+			if err := s.repo.CreateInTx(ctx, tx, folder); err != nil {
+				return err
+			}
+			parentID = &folder.ID
+			parentPath = folder.Path
+			parentDepth = depth
+			leafID = folder.ID
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if leafID == "" {
+		return nil, nil
+	}
+	return s.repo.GetByID(ctx, tenantID, leafID)
+}
+
+// (findChildByNameInTx removed: EnsureFolderPath now uses repo.GetChildByNameInTx
+// so the lookup honors the configured repository — including the in-memory fake
+// used in tests.)

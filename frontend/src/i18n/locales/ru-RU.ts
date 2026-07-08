@@ -363,6 +363,8 @@ export default {
     uploadPartialSuccess: 'Загрузка завершена: успешно {success}, ошибка {fail}',
     uploadAllFailed: 'Все файлы не удалось загрузить',
     uploadingFolder: 'Загрузка {total} файлов из папки...',
+    uploadingZip: 'Распаковка и загрузка архива {name}...',
+    folderUploadPartial: 'Загрузка папки завершена: {uploaded} загружено, {skipped} пропущено, {errors} ошибок',
     uploadingValidFiles: 'Загрузка {valid}/{total} действительных файлов...',
     noValidFiles: 'Нет действительных файлов',
     noValidFilesInFolder: 'Все {total} файлов в папке не поддерживаются',
@@ -3874,6 +3876,7 @@ export default {
   upload: {
     uploadDocument: 'Загрузить документ',
     uploadFolder: 'Загрузить папку',
+    uploadZip: 'Загрузить Zip',
     onlineEdit: 'Онлайн редактирование',
     deleteRecord: 'Удалить запись'
   },

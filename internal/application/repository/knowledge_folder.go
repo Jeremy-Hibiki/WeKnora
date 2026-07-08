@@ -3,20 +3,20 @@ package repository
 import (
 	"context"
 	"errors"
-	"fmt"
 
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // Sentinel errors for folder operations.
 var (
-	ErrFolderNotFound     = errors.New("folder not found")
-	ErrFolderNameExists   = errors.New("folder name already exists")
-	ErrFolderNotEmpty     = errors.New("folder is not empty")
-	ErrMaxDepthExceeded   = errors.New("maximum folder depth exceeded")
-	ErrCircularReference  = errors.New("cannot move folder to its own descendant")
+	ErrFolderNotFound    = errors.New("folder not found")
+	ErrFolderNameExists  = errors.New("folder name already exists")
+	ErrFolderNotEmpty    = errors.New("folder is not empty")
+	ErrMaxDepthExceeded  = errors.New("maximum folder depth exceeded")
+	ErrCircularReference = errors.New("cannot move folder to its own descendant")
 )
 
 // knowledgeFolderRepository implements interfaces.KnowledgeFolderRepository.
@@ -34,12 +34,43 @@ func (r *knowledgeFolderRepository) Create(ctx context.Context, folder *types.Kn
 	return r.db.WithContext(ctx).Create(folder).Error
 }
 
+// CreateInTx inserts a new folder record within the given transaction.
+func (r *knowledgeFolderRepository) CreateInTx(ctx context.Context, tx *gorm.DB, folder *types.KnowledgeFolder) error {
+	if tx == nil {
+		tx = r.db
+	}
+	return tx.WithContext(ctx).Create(folder).Error
+}
+
 // GetByID retrieves a folder by ID, scoped to tenant.
 func (r *knowledgeFolderRepository) GetByID(ctx context.Context, tenantID uint64, id string) (*types.KnowledgeFolder, error) {
 	var folder types.KnowledgeFolder
 	if err := r.db.WithContext(ctx).
 		Where("tenant_id = ? AND id = ?", tenantID, id).
 		First(&folder).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrFolderNotFound
+		}
+		return nil, err
+	}
+	return &folder, nil
+}
+
+// GetByIDForUpdate retrieves a folder with a row-level write lock (SELECT ... FOR UPDATE
+// on PostgreSQL; a no-op plain read on SQLite). Use inside a transaction to serialize
+// concurrent moves and prevent the TOCTOU race where two moves both pass the cycle /
+// name checks and then clobber each other.
+func (r *knowledgeFolderRepository) GetByIDForUpdate(ctx context.Context, tx *gorm.DB, tenantID uint64, id string) (*types.KnowledgeFolder, error) {
+	if tx == nil {
+		tx = r.db
+	}
+	var folder types.KnowledgeFolder
+	q := tx.WithContext(ctx).
+		Where("tenant_id = ? AND id = ?", tenantID, id)
+	if tx.Dialector.Name() == "postgres" {
+		q = q.Clauses(clause.Locking{Strength: "UPDATE"})
+	}
+	if err := q.First(&folder).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrFolderNotFound
 		}
@@ -104,23 +135,6 @@ func (r *knowledgeFolderRepository) Delete(ctx context.Context, tenantID uint64,
 	return nil
 }
 
-// Move updates the parent_folder_id, path, and depth of a folder.
-func (r *knowledgeFolderRepository) Move(
-	ctx context.Context,
-	id string,
-	newParentID *string,
-	newPath string,
-	newDepth int,
-) error {
-	return r.db.WithContext(ctx).Model(&types.KnowledgeFolder{}).
-		Where("id = ?", id).
-		Updates(map[string]interface{}{
-			"parent_folder_id": newParentID,
-			"path":             newPath,
-			"depth":            newDepth,
-		}).Error
-}
-
 // GetByPath retrieves a folder by its exact path within a knowledge base.
 func (r *knowledgeFolderRepository) GetByPath(
 	ctx context.Context,
@@ -140,16 +154,40 @@ func (r *knowledgeFolderRepository) GetByPath(
 	return &folder, nil
 }
 
-// GetDescendants returns all descendant folders of the given folder.
+// GetDescendants returns all descendant folders of the given folder (any depth),
+// scoped to tenant and knowledge base so a path LIKE cannot bleed across tenants.
 func (r *knowledgeFolderRepository) GetDescendants(
 	ctx context.Context,
+	tenantID uint64,
 	folderID string,
 ) ([]*types.KnowledgeFolder, error) {
-	// First get the folder's path
+	return r.getDescendants(ctx, r.db, tenantID, folderID)
+}
+
+// GetDescendantsInTx is GetDescendants within the given transaction.
+func (r *knowledgeFolderRepository) GetDescendantsInTx(
+	ctx context.Context,
+	tx *gorm.DB,
+	tenantID uint64,
+	folderID string,
+) ([]*types.KnowledgeFolder, error) {
+	if tx == nil {
+		tx = r.db
+	}
+	return r.getDescendants(ctx, tx, tenantID, folderID)
+}
+
+func (r *knowledgeFolderRepository) getDescendants(
+	ctx context.Context,
+	db *gorm.DB,
+	tenantID uint64,
+	folderID string,
+) ([]*types.KnowledgeFolder, error) {
+	// First get the folder's path and kb scope.
 	var folder types.KnowledgeFolder
-	if err := r.db.WithContext(ctx).
-		Select("path").
-		Where("id = ?", folderID).
+	if err := db.WithContext(ctx).
+		Select("path, knowledge_base_id").
+		Where("tenant_id = ? AND id = ?", tenantID, folderID).
 		First(&folder).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrFolderNotFound
@@ -158,8 +196,10 @@ func (r *knowledgeFolderRepository) GetDescendants(
 	}
 
 	var descendants []*types.KnowledgeFolder
-	// Use LIKE on the path to find all descendants
-	if err := r.db.WithContext(ctx).
+	// Scope by tenant + kb so even a pathological UUID path collision cannot pull
+	// rows from another tenant's tree.
+	if err := db.WithContext(ctx).
+		Where("tenant_id = ? AND knowledge_base_id = ?", tenantID, folder.KnowledgeBaseID).
 		Where("path LIKE ?", folder.Path+"%").
 		Where("id != ?", folderID).
 		Find(&descendants).Error; err != nil {
@@ -217,11 +257,11 @@ func (r *knowledgeFolderRepository) CountKnowledgeRecursive(
 	tenantID uint64,
 	folderID string,
 ) (int64, error) {
-	// Get the folder to obtain its path
+	// Get the folder to obtain its path and kb scope.
 	var folder types.KnowledgeFolder
 	if err := r.db.WithContext(ctx).
-		Select("path").
-		Where("id = ?", folderID).
+		Select("path, knowledge_base_id").
+		Where("tenant_id = ? AND id = ?", tenantID, folderID).
 		First(&folder).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return 0, ErrFolderNotFound
@@ -229,9 +269,10 @@ func (r *knowledgeFolderRepository) CountKnowledgeRecursive(
 		return 0, err
 	}
 
-	// Collect all descendant folder IDs
+	// Collect all descendant folder IDs, scoped to tenant + kb.
 	var folderIDs []string
 	if err := r.db.WithContext(ctx).Model(&types.KnowledgeFolder{}).
+		Where("tenant_id = ? AND knowledge_base_id = ?", tenantID, folder.KnowledgeBaseID).
 		Where("path LIKE ?", folder.Path+"%").
 		Pluck("id", &folderIDs).Error; err != nil {
 		return 0, err
@@ -256,8 +297,36 @@ func (r *knowledgeFolderRepository) CheckNameExists(
 	name string,
 	excludeID string,
 ) (bool, error) {
+	return r.checkNameExists(ctx, r.db, tenantID, kbID, parentID, name, excludeID)
+}
+
+// CheckNameExistsInTx is CheckNameExists within the given transaction.
+func (r *knowledgeFolderRepository) CheckNameExistsInTx(
+	ctx context.Context,
+	tx *gorm.DB,
+	tenantID uint64,
+	kbID string,
+	parentID *string,
+	name string,
+	excludeID string,
+) (bool, error) {
+	if tx == nil {
+		tx = r.db
+	}
+	return r.checkNameExists(ctx, tx, tenantID, kbID, parentID, name, excludeID)
+}
+
+func (r *knowledgeFolderRepository) checkNameExists(
+	ctx context.Context,
+	db *gorm.DB,
+	tenantID uint64,
+	kbID string,
+	parentID *string,
+	name string,
+	excludeID string,
+) (bool, error) {
 	var count int64
-	query := r.db.WithContext(ctx).Model(&types.KnowledgeFolder{}).
+	query := db.WithContext(ctx).Model(&types.KnowledgeFolder{}).
 		Where("tenant_id = ? AND knowledge_base_id = ? AND name = ?", tenantID, kbID, name)
 
 	if parentID == nil {
@@ -276,22 +345,166 @@ func (r *knowledgeFolderRepository) CheckNameExists(
 	return count > 0, nil
 }
 
-// BatchUpdateDescendantPaths updates path and depth for all descendants of a folder.
-func (r *knowledgeFolderRepository) BatchUpdateDescendantPaths(
+// GetChildByNameInTx returns the direct child folder with the given name under
+// parentID (nil = root), or (nil, gorm.ErrRecordNotFound) when absent.
+func (r *knowledgeFolderRepository) GetChildByNameInTx(
 	ctx context.Context,
-	oldPath string,
+	tx *gorm.DB,
+	tenantID uint64,
+	kbID string,
+	parentID *string,
+	name string,
+) (*types.KnowledgeFolder, error) {
+	if tx == nil {
+		tx = r.db
+	}
+	q := tx.WithContext(ctx).
+		Where("tenant_id = ? AND knowledge_base_id = ? AND name = ?", tenantID, kbID, name)
+	if parentID == nil || *parentID == "" {
+		q = q.Where("parent_folder_id IS NULL")
+	} else {
+		q = q.Where("parent_folder_id = ?", *parentID)
+	}
+	var f types.KnowledgeFolder
+	if err := q.First(&f).Error; err != nil {
+		return nil, err
+	}
+	return &f, nil
+}
+
+// MoveSubtree atomically moves a folder and repaths all its descendants within
+// the given transaction. The folder's own parent_folder_id/path/depth is updated,
+// then every descendant's path/depth is adjusted. Both writes run against `tx`, so
+// the caller's Transaction() wrapper actually controls the commit boundary.
+//
+// The prefix rewrite avoids SQL REPLACE, which would substitute *every* occurrence
+// of oldPath inside a descendant path rather than just the leading prefix. Instead
+// we concatenate newPath with the suffix of the existing path past the oldPath
+// prefix: path = newPath || SUBSTR(path, LENGTH(oldPath)+1).
+func (r *knowledgeFolderRepository) MoveSubtree(
+	ctx context.Context,
+	tx *gorm.DB,
+	tenantID uint64,
+	id string,
+	newParentID *string,
 	newPath string,
+	newDepth int,
+	oldPath string,
 	depthDelta int,
 ) error {
-	// Use REPLACE to update the path prefix and adjust depth.
-	// PostgreSQL: REPLACE(path, oldPath, newPath)
-	// SQLite: REPLACE(path, oldPath, newPath) — both support REPLACE.
-	query := r.db.WithContext(ctx).Model(&types.KnowledgeFolder{}).
-		Where("path LIKE ?", oldPath+"%").
-		Where("path != ?", oldPath). // Don't update the folder itself (handled separately)
+	if tx == nil {
+		tx = r.db
+	}
+	// 1. Update the folder itself.
+	if err := tx.WithContext(ctx).Model(&types.KnowledgeFolder{}).
+		Where("tenant_id = ? AND id = ?", tenantID, id).
 		Updates(map[string]interface{}{
-			"path":  gorm.Expr("REPLACE(path, ?, ?)", oldPath, newPath),
-			"depth": gorm.Expr(fmt.Sprintf("depth + %d", depthDelta)),
-		})
-	return query.Error
+			"parent_folder_id": newParentID,
+			"path":             newPath,
+			"depth":            newDepth,
+		}).Error; err != nil {
+		return err
+	}
+	// 2. Repath every descendant. The depth delta is bound as an integer parameter
+	//    (never string-interpolated), and the prefix is replaced positionally.
+	updateDepth := gorm.Expr("depth + ?", depthDelta)
+	var pathExpr interface{}
+	switch tx.Dialector.Name() {
+	case "sqlite":
+		// SQLite SUBSTR is 1-indexed.
+		pathExpr = gorm.Expr("? || SUBSTR(path, LENGTH(?) + 1)", newPath, oldPath)
+	default:
+		// PostgreSQL: use OVERLAY so only the leading segment is replaced.
+		pathExpr = gorm.Expr("OVERLAY(path PLACING ? FROM 1 FOR LENGTH(?))", newPath, oldPath)
+	}
+	return tx.WithContext(ctx).Model(&types.KnowledgeFolder{}).
+		Where("tenant_id = ? AND path LIKE ?", tenantID, oldPath+"%").
+		Where("id != ?", id).
+		Updates(map[string]interface{}{
+			"path":  pathExpr,
+			"depth": updateDepth,
+		}).Error
+}
+
+// ForceDeleteSubtree cascade-deletes a folder and all its descendants within the
+// given transaction, first unlinking (folder_id = NULL) any knowledge entries that
+// lived under them so the ON DELETE SET NULL FK does not fight us.
+func (r *knowledgeFolderRepository) ForceDeleteSubtree(
+	ctx context.Context,
+	tx *gorm.DB,
+	tenantID uint64,
+	id string,
+) error {
+	if tx == nil {
+		tx = r.db
+	}
+	descendants, err := r.getDescendants(ctx, tx, tenantID, id)
+	if err != nil {
+		return err
+	}
+	allFolderIDs := make([]string, 0, len(descendants)+1)
+	for _, d := range descendants {
+		allFolderIDs = append(allFolderIDs, d.ID)
+	}
+	allFolderIDs = append(allFolderIDs, id)
+
+	// Unlink knowledge entries in these folders (folder_id = NULL).
+	if err := tx.WithContext(ctx).Model(&types.Knowledge{}).
+		Where("tenant_id = ? AND folder_id IN ?", tenantID, allFolderIDs).
+		Update("folder_id", nil).Error; err != nil {
+		return err
+	}
+	// Delete descendant folders first (deepest last) to avoid FK self-reference issues.
+	for i := len(descendants) - 1; i >= 0; i-- {
+		if err := tx.WithContext(ctx).
+			Where("tenant_id = ? AND id = ?", tenantID, descendants[i].ID).
+			Delete(&types.KnowledgeFolder{}).Error; err != nil {
+			return err
+		}
+	}
+	// Delete the folder itself.
+	res := tx.WithContext(ctx).
+		Where("tenant_id = ? AND id = ?", tenantID, id).
+		Delete(&types.KnowledgeFolder{})
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return ErrFolderNotFound
+	}
+	return nil
+}
+
+// CreateManyInTx bulk-inserts folders within a transaction (used when building a
+// folder tree from an uploaded directory or unzipped archive).
+func (r *knowledgeFolderRepository) CreateManyInTx(ctx context.Context, tx *gorm.DB, folders []*types.KnowledgeFolder) error {
+	if len(folders) == 0 {
+		return nil
+	}
+	if tx == nil {
+		tx = r.db
+	}
+	return tx.WithContext(ctx).CreateInBatches(folders, 100).Error
+}
+
+// FindByOwnerPath returns the folder owned by (tenantID, kbID) at the exact
+// materialized path, or nil when none exists. Used by the upload-folder idempotent
+// creation flow to detect existing folders and skip them.
+func (r *knowledgeFolderRepository) FindByOwnerPath(
+	ctx context.Context,
+	tenantID uint64,
+	kbID string,
+	path string,
+) (*types.KnowledgeFolder, error) {
+	var folder types.KnowledgeFolder
+	err := r.db.WithContext(ctx).
+		Where("tenant_id = ? AND knowledge_base_id = ? AND path = ?", tenantID, kbID, path).
+		First(&folder).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &folder, nil
 }

@@ -424,6 +424,8 @@ export default {
     uploadPartialSuccess: 'Upload completed: {success} succeeded, {fail} failed',
     uploadAllFailed: 'All files failed to upload',
     uploadingFolder: 'Uploading {total} files from folder...',
+    uploadingZip: 'Extracting and uploading zip {name}...',
+    folderUploadPartial: 'Folder upload complete: {uploaded} uploaded, {skipped} skipped, {errors} failed',
     uploadingValidFiles: 'Uploading {valid}/{total} valid files...',
     noValidFiles: 'No valid files',
     noValidFilesInFolder: 'All {total} files in folder are unsupported',
@@ -4227,6 +4229,7 @@ export default {
   upload: {
     uploadDocument: 'Upload Document',
     uploadFolder: 'Upload Folder',
+    uploadZip: 'Upload Zip',
     onlineEdit: 'Online Edit',
     deleteRecord: 'Delete Record'
   },

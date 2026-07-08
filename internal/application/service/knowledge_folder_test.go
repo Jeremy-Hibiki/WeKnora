@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/Tencent/WeKnora/internal/application/repository"
@@ -31,6 +32,10 @@ func newFakeFolderRepo() *fakeFolderRepo {
 func (r *fakeFolderRepo) Create(ctx context.Context, folder *types.KnowledgeFolder) error {
 	r.folders[folder.ID] = folder
 	return nil
+}
+
+func (r *fakeFolderRepo) CreateInTx(ctx context.Context, tx *gorm.DB, folder *types.KnowledgeFolder) error {
+	return r.Create(ctx, folder)
 }
 
 func (r *fakeFolderRepo) GetByID(ctx context.Context, tenantID uint64, id string) (*types.KnowledgeFolder, error) {
@@ -88,15 +93,8 @@ func (r *fakeFolderRepo) Delete(ctx context.Context, tenantID uint64, id string)
 	return nil
 }
 
-func (r *fakeFolderRepo) Move(ctx context.Context, id string, newParentID *string, newPath string, newDepth int) error {
-	f, ok := r.folders[id]
-	if !ok {
-		return repository.ErrFolderNotFound
-	}
-	f.ParentFolderID = newParentID
-	f.Path = newPath
-	f.Depth = newDepth
-	return nil
+func (r *fakeFolderRepo) GetByIDForUpdate(ctx context.Context, tx *gorm.DB, tenantID uint64, id string) (*types.KnowledgeFolder, error) {
+	return r.GetByID(ctx, tenantID, id)
 }
 
 func (r *fakeFolderRepo) GetByPath(ctx context.Context, tenantID uint64, kbID string, path string) (*types.KnowledgeFolder, error) {
@@ -110,14 +108,25 @@ func (r *fakeFolderRepo) GetByPath(ctx context.Context, tenantID uint64, kbID st
 	return nil, nil
 }
 
-func (r *fakeFolderRepo) GetDescendants(ctx context.Context, folderID string) ([]*types.KnowledgeFolder, error) {
+func (r *fakeFolderRepo) GetDescendants(ctx context.Context, tenantID uint64, folderID string) ([]*types.KnowledgeFolder, error) {
+	return r.getDescendantsImpl(ctx, tenantID, folderID)
+}
+
+func (r *fakeFolderRepo) GetDescendantsInTx(ctx context.Context, tx *gorm.DB, tenantID uint64, folderID string) ([]*types.KnowledgeFolder, error) {
+	return r.getDescendantsImpl(ctx, tenantID, folderID)
+}
+
+func (r *fakeFolderRepo) getDescendantsImpl(_ context.Context, tenantID uint64, folderID string) ([]*types.KnowledgeFolder, error) {
 	self, ok := r.folders[folderID]
-	if !ok {
+	if !ok || self.TenantID != tenantID {
 		return nil, repository.ErrFolderNotFound
 	}
 	var result []*types.KnowledgeFolder
 	for _, f := range r.folders {
 		if f.ID == folderID {
+			continue
+		}
+		if f.TenantID != tenantID || f.KnowledgeBaseID != self.KnowledgeBaseID {
 			continue
 		}
 		if len(f.Path) >= len(self.Path) && f.Path[:len(self.Path)] == self.Path {
@@ -190,14 +199,90 @@ func (r *fakeFolderRepo) CheckNameExists(ctx context.Context, tenantID uint64, k
 	return false, nil
 }
 
-func (r *fakeFolderRepo) BatchUpdateDescendantPaths(ctx context.Context, oldPath string, newPath string, depthDelta int) error {
+func (r *fakeFolderRepo) CheckNameExistsInTx(ctx context.Context, tx *gorm.DB, tenantID uint64, kbID string, parentID *string, name string, excludeID string) (bool, error) {
+	return r.CheckNameExists(ctx, tenantID, kbID, parentID, name, excludeID)
+}
+
+func (r *fakeFolderRepo) GetChildByNameInTx(_ context.Context, _ *gorm.DB, tenantID uint64, kbID string, parentID *string, name string) (*types.KnowledgeFolder, error) {
 	for _, f := range r.folders {
-		if len(f.Path) >= len(oldPath) && f.Path[:len(oldPath)] == oldPath && f.Path != oldPath {
-			f.Path = newPath + f.Path[len(oldPath):]
-			f.Depth += depthDelta
+		if f.TenantID != tenantID || f.KnowledgeBaseID != kbID || f.Name != name {
+			continue
+		}
+		if (parentID == nil || *parentID == "") && f.ParentFolderID == nil {
+			cp := *f
+			cp.Children = nil
+			return &cp, nil
+		}
+		if parentID != nil && f.ParentFolderID != nil && *f.ParentFolderID == *parentID {
+			cp := *f
+			cp.Children = nil
+			return &cp, nil
+		}
+	}
+	return nil, gorm.ErrRecordNotFound
+}
+
+func (r *fakeFolderRepo) MoveSubtree(ctx context.Context, tx *gorm.DB, tenantID uint64, id string, newParentID *string, newPath string, newDepth int, oldPath string, depthDelta int) error {
+	f, ok := r.folders[id]
+	if !ok || f.TenantID != tenantID {
+		return repository.ErrFolderNotFound
+	}
+	f.ParentFolderID = newParentID
+	f.Path = newPath
+	f.Depth = newDepth
+	for _, d := range r.folders {
+		if d.TenantID != tenantID || d.ID == id {
+			continue
+		}
+		if len(d.Path) >= len(oldPath) && d.Path[:len(oldPath)] == oldPath {
+			d.Path = newPath + d.Path[len(oldPath):]
+			d.Depth += depthDelta
 		}
 	}
 	return nil
+}
+
+func (r *fakeFolderRepo) ForceDeleteSubtree(ctx context.Context, tx *gorm.DB, tenantID uint64, id string) error {
+	descendants, err := r.getDescendantsImpl(ctx, tenantID, id)
+	if err != nil {
+		return err
+	}
+	for _, d := range descendants {
+		delete(r.folders, d.ID)
+		for _, k := range r.knowledge {
+			if k.FolderID != nil && *k.FolderID == d.ID {
+				k.FolderID = nil
+			}
+		}
+	}
+	if _, ok := r.folders[id]; !ok {
+		return repository.ErrFolderNotFound
+	}
+	delete(r.folders, id)
+	for _, k := range r.knowledge {
+		if k.FolderID != nil && *k.FolderID == id {
+			k.FolderID = nil
+		}
+	}
+	return nil
+}
+
+func (r *fakeFolderRepo) CreateManyInTx(ctx context.Context, tx *gorm.DB, folders []*types.KnowledgeFolder) error {
+	for _, f := range folders {
+		r.folders[f.ID] = f
+	}
+	return nil
+}
+
+func (r *fakeFolderRepo) FindByOwnerPath(ctx context.Context, tenantID uint64, kbID string, path string) (*types.KnowledgeFolder, error) {
+	for _, f := range r.folders {
+		if f.TenantID == tenantID && f.KnowledgeBaseID == kbID && f.Path == path {
+			cp := *f
+			cp.Children = nil
+			return &cp, nil
+		}
+	}
+	return nil, nil
 }
 
 // --- Helper & Setup ---
@@ -596,4 +681,127 @@ func TestPopulateChildCounts_AggregatesRecursively(t *testing.T) {
 	total := populateChildCounts(root)
 	assert.Equal(t, int64(6), total)
 	assert.Equal(t, int64(6), root.KnowledgeCount)
+}
+
+// --- New tests for transaction-safe move + EnsureFolderPath (feature/multi-folder-upload) ---
+
+// TestMoveFolder_RepDescendants verifies that moving a folder with descendants
+// repaths EVERY descendant's path and depth atomically. This is the behavior the
+// broken transaction would corrupt: after MoveSubtree, a grandchild's path must
+// be rooted at the new parent.
+func TestMoveFolder_RepDescendants(t *testing.T) {
+	svc, repo := setupServiceTest(t)
+	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(1))
+
+	srcID := uuid.New().String()
+	childID := uuid.New().String()
+	grandID := uuid.New().String()
+	destID := uuid.New().String()
+
+	repo.folders[srcID] = &types.KnowledgeFolder{ID: srcID, TenantID: 1, KnowledgeBaseID: "kb-1", Name: "src", Path: "/" + srcID + "/", Depth: 1}
+	repo.folders[childID] = &types.KnowledgeFolder{ID: childID, TenantID: 1, KnowledgeBaseID: "kb-1", Name: "child", ParentFolderID: ptr(srcID), Path: "/" + srcID + "/" + childID + "/", Depth: 2}
+	repo.folders[grandID] = &types.KnowledgeFolder{ID: grandID, TenantID: 1, KnowledgeBaseID: "kb-1", Name: "grand", ParentFolderID: ptr(childID), Path: "/" + srcID + "/" + childID + "/" + grandID + "/", Depth: 3}
+	repo.folders[destID] = &types.KnowledgeFolder{ID: destID, TenantID: 1, KnowledgeBaseID: "kb-1", Name: "dest", Path: "/" + destID + "/", Depth: 1}
+
+	_, err := svc.MoveFolder(ctx, srcID, &types.MoveFolderRequest{TargetParentFolderID: &destID})
+	require.NoError(t, err)
+
+	// After move: src depth=2, child depth=3, grand depth=4; all paths rooted under dest.
+	assert.Equal(t, 2, repo.folders[srcID].Depth)
+	assert.Equal(t, "/"+destID+"/"+srcID+"/", repo.folders[srcID].Path)
+	assert.Equal(t, 3, repo.folders[childID].Depth)
+	assert.Equal(t, "/"+destID+"/"+srcID+"/"+childID+"/", repo.folders[childID].Path)
+	assert.Equal(t, 4, repo.folders[grandID].Depth)
+	assert.Equal(t, "/"+destID+"/"+srcID+"/"+childID+"/"+grandID+"/", repo.folders[grandID].Path)
+}
+
+// TestMoveFolder_CrossKBRejected ensures a folder cannot be moved under a parent
+// belonging to a different knowledge base.
+func TestMoveFolder_CrossKBRejected(t *testing.T) {
+	svc, repo := setupServiceTest(t)
+	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(1))
+
+	srcID := uuid.New().String()
+	destID := uuid.New().String()
+	repo.folders[srcID] = &types.KnowledgeFolder{ID: srcID, TenantID: 1, KnowledgeBaseID: "kb-1", Name: "src", Path: "/" + srcID + "/", Depth: 1}
+	repo.folders[destID] = &types.KnowledgeFolder{ID: destID, TenantID: 1, KnowledgeBaseID: "kb-other", Name: "dest", Path: "/" + destID + "/", Depth: 1}
+
+	_, err := svc.MoveFolder(ctx, srcID, &types.MoveFolderRequest{TargetParentFolderID: &destID})
+	assert.ErrorIs(t, err, repository.ErrCircularReference)
+}
+
+// TestEnsureFolderPath_CreatesChain verifies a multi-segment relative path
+// produces nested folders with correct paths and depths.
+func TestEnsureFolderPath_CreatesChain(t *testing.T) {
+	svc, repo := setupServiceTest(t)
+	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(1))
+
+	leaf, err := svc.EnsureFolderPath(ctx, "kb-1", nil, "docs/api/v2")
+	require.NoError(t, err)
+	require.NotNil(t, leaf)
+
+	// Three segments → three folders, depths 1..3, each path a prefix of the next.
+	assert.Equal(t, "v2", leaf.Name)
+	assert.Equal(t, 3, leaf.Depth)
+	assert.Equal(t, 3, len(repo.folders))
+
+	// The leaf path must end with the leaf ID and be nested under api under docs.
+	assert.True(t, strings.HasSuffix(leaf.Path, leaf.ID+"/"))
+}
+
+// TestEnsureFolderPath_SkipExisting verifies the skip conflict policy: when a
+// folder already exists along the path, it is reused rather than duplicated.
+func TestEnsureFolderPath_SkipExisting(t *testing.T) {
+	svc, repo := setupServiceTest(t)
+	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(1))
+
+	existingID := uuid.New().String()
+	repo.folders[existingID] = &types.KnowledgeFolder{
+		ID: existingID, TenantID: 1, KnowledgeBaseID: "kb-1", Name: "docs",
+		Path: "/" + existingID + "/", Depth: 1,
+	}
+
+	leaf, err := svc.EnsureFolderPath(ctx, "kb-1", nil, "docs/api")
+	require.NoError(t, err)
+	require.NotNil(t, leaf)
+
+	// "docs" reused (not duplicated); one new folder "api" created.
+	assert.Equal(t, "api", leaf.Name)
+	assert.Equal(t, 2, len(repo.folders))
+	assert.Equal(t, existingID, *leaf.ParentFolderID)
+}
+
+// TestEnsureFolderPath_RejectsTraversal ensures ".." segments are dropped and
+// cannot escape the KB root.
+func TestEnsureFolderPath_RejectsTraversal(t *testing.T) {
+	svc, repo := setupServiceTest(t)
+	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(1))
+
+	leaf, err := svc.EnsureFolderPath(ctx, "kb-1", nil, "../docs/../../api")
+	require.NoError(t, err)
+	require.NotNil(t, leaf)
+	assert.Equal(t, "api", leaf.Name)
+	assert.Equal(t, 2, len(repo.folders)) // only docs + api created
+}
+
+// TestValidateFolderOwnership verifies the ownership gate used by upload handlers.
+func TestValidateFolderOwnership(t *testing.T) {
+	svc, repo := setupServiceTest(t)
+	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(1))
+
+	folderID := uuid.New().String()
+	repo.folders[folderID] = &types.KnowledgeFolder{
+		ID: folderID, TenantID: 1, KnowledgeBaseID: "kb-1", Name: "f", Path: "/" + folderID + "/", Depth: 1,
+	}
+
+	// Nil folder (root) is always valid.
+	assert.NoError(t, svc.ValidateFolderOwnership(ctx, 1, "kb-1", nil))
+	// Same KB is valid.
+	assert.NoError(t, svc.ValidateFolderOwnership(ctx, 1, "kb-1", &folderID))
+	// Different KB is rejected.
+	err := svc.ValidateFolderOwnership(ctx, 1, "kb-other", &folderID)
+	assert.ErrorIs(t, err, repository.ErrFolderNotFound)
+	// Wrong tenant is rejected.
+	err = svc.ValidateFolderOwnership(ctx, 2, "kb-1", &folderID)
+	assert.ErrorIs(t, err, repository.ErrFolderNotFound)
 }

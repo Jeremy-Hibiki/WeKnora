@@ -422,6 +422,8 @@ export default {
     uploadPartialSuccess: "업로드 완료: 성공 {success}개, 실패 {fail}개",
     uploadAllFailed: "모든 파일 업로드 실패",
     uploadingFolder: "폴더의 {total}개 파일 업로드 중...",
+    uploadingZip: "zip 압축풀기 및 업로드 중 {name}...",
+    folderUploadPartial: "폴더 업로드 완료: {uploaded} 성공, {skipped} 건너뜀, {errors} 실패",
     uploadingValidFiles: "{valid}/{total}개 유효 파일 업로드 중...",
     noValidFiles: "유효한 파일이 없습니다",
     noValidFilesInFolder: "폴더의 {total}개 파일 모두 지원되지 않음",
@@ -3193,6 +3195,7 @@ export default {
   upload: {
     uploadDocument: "문서 업로드",
     uploadFolder: "폴더 업로드",
+    uploadZip: "Zip 업로드",
     onlineEdit: "온라인 편집",
     deleteRecord: "기록 삭제",
   },

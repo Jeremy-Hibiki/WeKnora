@@ -40,10 +40,18 @@ func (h *KnowledgeHandler) MoveKnowledgeToFolder(c *gin.Context) {
 	}
 
 	// Validate access
-	_, effectiveCtx, err := h.resolveKnowledgeAndValidateKBAccess(c, knowledgeID, types.OrgRoleEditor)
+	knowledge, effectiveCtx, err := h.resolveKnowledgeAndValidateKBAccess(c, knowledgeID, types.OrgRoleEditor)
 	if err != nil {
 		c.JSON(http.StatusForbidden, errors.NewForbiddenError("Permission denied"))
 		return
+	}
+
+	// Validate folder ownership before moving.
+	if req.FolderID != nil && *req.FolderID != "" {
+		if err := h.folderService.ValidateFolderOwnership(effectiveCtx, knowledge.TenantID, knowledge.KnowledgeBaseID, req.FolderID); err != nil {
+			c.JSON(http.StatusBadRequest, errors.NewBadRequestError("folder does not belong to this knowledge base"))
+			return
+		}
 	}
 
 	// Move to folder
@@ -109,6 +117,14 @@ func (h *KnowledgeHandler) BatchMoveKnowledgeToFolder(c *gin.Context) {
 	if err != nil {
 		c.JSON(http.StatusForbidden, errors.NewForbiddenError("Permission denied"))
 		return
+	}
+
+	// Validate folder ownership before batch moving.
+	if req.FolderID != nil && *req.FolderID != "" {
+		if err := h.folderService.ValidateFolderOwnership(effectiveCtx, firstKnowledge.TenantID, firstKnowledge.KnowledgeBaseID, req.FolderID); err != nil {
+			c.JSON(http.StatusBadRequest, errors.NewBadRequestError("folder does not belong to this knowledge base"))
+			return
+		}
 	}
 
 	// Batch move

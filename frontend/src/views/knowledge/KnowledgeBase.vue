@@ -28,6 +28,8 @@ import {
   listKnowledgeTags,
   updateKnowledgeTagBatch,
   uploadKnowledgeFile,
+  uploadKnowledgeFolder,
+  uploadKnowledgeZip,
   createKnowledgeFromURL,
   reparseKnowledge,
   cancelKnowledgeParse,
@@ -35,6 +37,7 @@ import {
   batchReparseKnowledge,
   getKnowledgeSpans,
   getKnowledgeDetails,
+  type FolderUploadResult,
 } from "@/api/knowledge-base/index";
 import { createFolder } from "@/api/knowledge-folder";
 import { knowledgeSpansPayloadHasTrace } from '@/utils/knowledgeTrace';
@@ -1557,11 +1560,10 @@ const buildFolderStructure = async (
         const parentPath = parts.slice(0, -1).join('/');
         parentId = pathToId.get(parentPath) || baseParentId;
       }
-      // Create folder (skip duplicates silently via backend, or reuse existing)
-      const created: any = await createFolder(targetKbId, {
+      const created = (await createFolder(targetKbId, {
         name: folderName,
         parent_folder_id: parentId,
-      });
+      })) as { id?: string } | undefined;
       if (created?.id) {
         pathToId.set(folderPath, created.id);
       }
@@ -1571,6 +1573,106 @@ const buildFolderStructure = async (
     }
   }
   return pathToId;
+};
+
+// Typed accessor for the non-standard `webkitRelativePath` property set by the
+// browser when a folder is selected via <input webkitdirectory>.
+const relativePathOf = (file: File): string | undefined => {
+  const rp = (file as File & { webkitRelativePath?: unknown }).webkitRelativePath;
+  return typeof rp === 'string' && rp.length > 0 ? rp : undefined;
+};
+
+// Upload a whole folder via the batch endpoint. The server builds the folder
+// tree atomically and returns a skip/error summary. Returns the same shape as
+// executeUploadBatch so callers (progress UI, refresh) are unchanged.
+const executeFolderUploadBatch = async (
+  files: File[],
+  options: { processConfig?: KnowledgeProcessOverrides; folderId?: string | null } = {},
+): Promise<{ successCount: number; failCount: number }> => {
+  const targetKbId = kbId.value;
+  if (!targetKbId || files.length === 0) {
+    return { successCount: 0, failCount: files.length };
+  }
+
+  const paths = files.map(relativePathOf).map((p) => p ?? '');
+  MessagePlugin.info(t('knowledgeBase.uploadingFolder', { total: files.length }));
+
+  try {
+    const result: FolderUploadResult = await uploadKnowledgeFolder(
+      targetKbId,
+      files,
+      paths,
+      {
+        root_folder_id: options.folderId ?? undefined,
+        tag_ids: selectedTagIds.value.length > 0 ? [...selectedTagIds.value] : undefined,
+        process_config: options.processConfig,
+      },
+    );
+    const successCount = result.uploaded_files ?? 0;
+    const failCount = (result.errors?.length ?? 0) + (result.skipped_files ?? 0);
+
+    if (successCount > 0) {
+      window.dispatchEvent(new CustomEvent('knowledgeFileUploaded', { detail: { kbId: targetKbId } }));
+    }
+
+    // Surface the skip/error summary so the user understands what happened.
+    if (result.skipped_files > 0 || (result.errors?.length ?? 0) > 0) {
+      MessagePlugin.warning(
+        t('knowledgeBase.folderUploadPartial', {
+          uploaded: successCount,
+          skipped: result.skipped_files,
+          errors: result.errors?.length ?? 0,
+        }),
+      );
+    } else {
+      MessagePlugin.success(t('knowledgeBase.uploadAllSuccess', { count: successCount }));
+    }
+    return { successCount, failCount };
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : t('knowledgeBase.uploadFailed');
+    MessagePlugin.error(message);
+    return { successCount: 0, failCount: files.length };
+  }
+};
+
+// Upload a single .zip archive; the server extracts and rebuilds the tree.
+const executeZipUpload = async (
+  zipFile: File,
+  options: { processConfig?: KnowledgeProcessOverrides; folderId?: string | null } = {},
+): Promise<{ successCount: number; failCount: number }> => {
+  const targetKbId = kbId.value;
+  if (!targetKbId) {
+    return { successCount: 0, failCount: 1 };
+  }
+  MessagePlugin.info(t('knowledgeBase.uploadingZip', { name: zipFile.name }));
+  try {
+    const result: FolderUploadResult = await uploadKnowledgeZip(targetKbId, zipFile, {
+      root_folder_id: options.folderId ?? undefined,
+      tag_ids: selectedTagIds.value.length > 0 ? [...selectedTagIds.value] : undefined,
+      process_config: options.processConfig,
+    });
+    const successCount = result.uploaded_files ?? 0;
+    const failCount = (result.errors?.length ?? 0) + (result.skipped_files ?? 0);
+    if (successCount > 0) {
+      window.dispatchEvent(new CustomEvent('knowledgeFileUploaded', { detail: { kbId: targetKbId } }));
+    }
+    if (result.skipped_files > 0 || (result.errors?.length ?? 0) > 0) {
+      MessagePlugin.warning(
+        t('knowledgeBase.folderUploadPartial', {
+          uploaded: successCount,
+          skipped: result.skipped_files,
+          errors: result.errors?.length ?? 0,
+        }),
+      );
+    } else {
+      MessagePlugin.success(t('knowledgeBase.uploadAllSuccess', { count: successCount }));
+    }
+    return { successCount, failCount };
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : t('knowledgeBase.uploadFailed');
+    MessagePlugin.error(message);
+    return { successCount: 0, failCount: 1 };
+  }
 };
 
 const executeUploadBatch = async (
@@ -1589,19 +1691,15 @@ const executeUploadBatch = async (
   let failCount = 0;
   const totalCount = files.length;
   const hasFolderPaths = files.some((file) => {
-    const relativePath = (file as File & { webkitRelativePath?: string }).webkitRelativePath;
+    const relativePath = relativePathOf(file);
     return !!relativePath && relativePath.split('/').length > 1;
   });
 
-  // Build folder structure from uploaded folder paths
-  let folderPathMap: Map<string, string> = new Map();
+  // Folder uploads go through the atomic batch endpoint (server builds the
+  // tree and dedupes in one transaction); flat-file uploads keep the
+  // per-file path below.
   if (hasFolderPaths) {
-    MessagePlugin.info(t('knowledgeBase.uploadingFolder', { total: totalCount }));
-    folderPathMap = await buildFolderStructure(
-      files,
-      targetKbId,
-      options.folderId || null,
-    );
+    return executeFolderUploadBatch(files, options);
   }
 
   for (const file of files) {
@@ -1615,20 +1713,13 @@ const executeUploadBatch = async (
       } = { file, tag_ids: tagIdsToUpload };
 
       // Determine which KB folder this file belongs to
-      const relativePath = (file as any).webkitRelativePath as string | undefined;
+      const relativePath = relativePathOf(file);
       if (relativePath) {
         const parts = relativePath.split('/');
         if (parts.length > 1) {
-          // File is inside a subfolder: get the parent folder's KB ID
-          const parentPath = parts.slice(0, -1).join('/');
-          const kbFolderId = folderPathMap.get(parentPath);
-          if (kbFolderId) {
-            uploadData.folder_id = kbFolderId;
-          }
-        }
-        // Use original filename (last segment) for display
-        if (parts.length >= 2) {
-          uploadData.fileName = parts.slice(1).join('/');
+          // File is inside a subfolder — folder creation is handled by the
+          // batch endpoint above; this branch only runs for flat uploads.
+          uploadData.fileName = parts[parts.length - 1];
         }
       } else if (options.folderId) {
         uploadData.folder_id = options.folderId;
@@ -1638,7 +1729,13 @@ const executeUploadBatch = async (
         uploadData.process_config = options.processConfig;
       }
 
-      const responseData: any = await uploadKnowledgeFile(targetKbId, uploadData);
+      const responseData = (await uploadKnowledgeFile(targetKbId, uploadData)) as unknown as {
+        success?: boolean;
+        code?: number | string;
+        status?: string;
+        message?: string;
+        error?: { message?: string; code?: string };
+      };
       const isSuccess = responseData?.success || responseData?.code === 200 || responseData?.status === 'success' || (!responseData?.error && responseData);
       if (isSuccess) {
         successCount++;
@@ -1657,11 +1754,12 @@ const executeUploadBatch = async (
           MessagePlugin.error(errorMessage);
         }
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       failCount++;
       if (totalCount === 1) {
-        let errorMessage = error?.error?.message || error?.message || t('knowledgeBase.uploadFailed');
-        if (error?.code === 'duplicate_file') {
+        const err = error as { error?: { message?: string }; message?: string; code?: string };
+        let errorMessage = err?.error?.message || err?.message || t('knowledgeBase.uploadFailed');
+        if (err?.code === 'duplicate_file') {
           errorMessage = t('knowledgeBase.fileExists');
         }
         MessagePlugin.error(errorMessage);
@@ -1675,7 +1773,8 @@ const executeUploadBatch = async (
     }));
   }
 
-  showUploadResultMessages(successCount, failCount, totalCount, folderPathMap.size > 0 ? 'folder' : 'document');
+  // Flat-file path only — folder uploads short-circuit earlier.
+  showUploadResultMessages(successCount, failCount, totalCount, 'document');
   return { successCount, failCount };
 };
 
@@ -1717,9 +1816,10 @@ const executeUrlImport = async (url: string, processConfig?: KnowledgeProcessOve
       }
       MessagePlugin.error(errorMessage);
     }
-  } catch (error: any) {
-    let errorMessage = error?.error?.message || error?.message || t('knowledgeBase.urlImportFailed');
-    if (error?.code === 'duplicate_url') {
+  } catch (error: unknown) {
+    const err = error as { error?: { message?: string }; message?: string; code?: string };
+    let errorMessage = err?.error?.message || err?.message || t('knowledgeBase.urlImportFailed');
+    if (err?.code === 'duplicate_url') {
       errorMessage = t('knowledgeBase.urlExists');
     }
     MessagePlugin.error(errorMessage);
@@ -1738,7 +1838,12 @@ const handleUploadConfirmResult = async (result: UploadConfirmResult) => {
   const folderId = result.folderId;
 
   if (files.length > 0) {
-    await executeUploadBatch(files, { processConfig, tagIds, folderId });
+    // A single .zip is extracted server-side into a folder tree.
+    if (files.length === 1 && files[0].name.toLowerCase().endsWith('.zip')) {
+      await executeZipUpload(files[0], { processConfig, folderId });
+    } else {
+      await executeUploadBatch(files, { processConfig, tagIds, folderId });
+    }
   }
 
   for (const url of urls) {

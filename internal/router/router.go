@@ -318,6 +318,9 @@ func RegisterKnowledgeRoutes(r *gin.RouterGroup, handler *handler.KnowledgeHandl
 		kb.POST("/url", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), handler.CreateKnowledgeFromURL)
 		kb.POST("/manual", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), handler.CreateManualKnowledge)
 		kbRead.GET("", g.Viewer(), g.KBAccessRead("id"), handler.ListKnowledge)
+		// Folder / zip uploads reconstruct the directory tree automatically.
+		kb.POST("/folder", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), handler.UploadFolder)
+		kb.POST("/zip", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), handler.UploadZip)
 		// Clearing all contents under a KB is a destructive op; gate
 		// behind Admin instead of Contributor.
 		kb.With(apiKeyFullAccess()).DELETE("", g.Admin(), g.KBAccessWrite("id"), handler.ClearKnowledgeBaseContents)
