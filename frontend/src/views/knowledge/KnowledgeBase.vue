@@ -1391,11 +1391,11 @@ const handleMoveToFolder = (item: KnowledgeCard) => {
 const handleBatchMoveToFolder = () => {
   const ids = [...selectedIds.value];
   if (ids.length === 0) return;
-  // Separate folders and knowledge entries.
+  // Separate folders and knowledge entries - search displayCardList (includes both folders and knowledge).
   const foldersToMove: KnowledgeFolder[] = [];
   const knowledgeIds: string[] = [];
   for (const id of ids) {
-    const item = cardList.value.find((c: KnowledgeCard) => c.id === id);
+    const item = displayCardList.value.find((c: KnowledgeCard) => c.id === id);
     if (item) {
       if ((item as any).isFolder) {
         foldersToMove.push(item as unknown as KnowledgeFolder);
@@ -1404,6 +1404,7 @@ const handleBatchMoveToFolder = () => {
       }
     }
   }
+  console.log('[BatchMove] selected:', ids.length, 'folders:', foldersToMove.length, 'knowledge:', knowledgeIds.length, 'cardList:', cardList.value.length);
   // Unified: open folder selector, move both folders and knowledge entries.
   batchMoveFolders.value = foldersToMove;
   batchMoveKnowledgeIds.value = knowledgeIds;
@@ -1470,6 +1471,7 @@ const handleMoveFolder = (folder: KnowledgeFolder) => {
 
 // Confirm move-folder: move the folder itself or batch-move multiple folders.
 const handleConfirmFolderMove = async (targetFolderId: string | null) => {
+  console.log('[ConfirmFolderMove] targetFolderId:', targetFolderId, 'folderToMove:', folderToMove.value?.id, 'batchMoveFolders:', batchMoveFolders.value.length, 'batchMoveKnowledgeIds:', batchMoveKnowledgeIds.value.length);
   if (folderToMove.value) {
     // Single folder move.
     const folder = folderToMove.value;
