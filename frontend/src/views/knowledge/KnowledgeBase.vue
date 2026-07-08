@@ -2562,6 +2562,12 @@ async function createNewSession(value: string): Promise<void> {
           <div class="tag-content">
             <div class="doc-card-area">
               <div class="doc-filter-bar">
+                <IconButtonGroup v-if="canEdit">
+                  <IconButton :icon="'folder-add'" :tooltip="$t('knowledgeFolder.createFolder')" @click="handleCreateFolder" />
+                </IconButtonGroup>
+                <IconButtonGroup>
+                  <IconButton :icon="'refresh'" :tooltip="$t('knowledgeBase.refresh')" @click="handleRefresh" />
+                </IconButtonGroup>
                 <t-input v-model.trim="docSearchKeyword" :placeholder="$t('knowledgeBase.docSearchPlaceholder')"
                   clearable class="doc-search-input" @clear="loadKnowledgeFiles(kbId)"
                   @enter="loadKnowledgeFiles(kbId)">
@@ -2701,15 +2707,11 @@ async function createNewSession(value: string): Promise<void> {
                 </div>
                 </div>
                 <IconButtonGroup v-if="canEdit">
-                  <IconButton :icon="'folder-add'" :tooltip="$t('knowledgeFolder.createFolder')" @click="handleCreateFolder" />
                   <KbUploadSourceDropdown ref="uploadSourceRef" :accept-file-types="acceptFileTypes"
                     :supported-file-types="[...supportedFileTypes]" include-manual trigger-icon="file-add"
                     data-guide="kb-detail-add-doc"
                     :tooltip="t('knowledgeBase.addDocument')" placement="bottom-right" @files="handleUploadSourceFiles"
                     @url="handleUploadSourceUrl" @manual="handleManualCreate" />
-                </IconButtonGroup>
-                <IconButtonGroup>
-                  <IconButton :icon="'refresh'" :tooltip="$t('knowledgeBase.refresh')" @click="handleRefresh" />
                 </IconButtonGroup>
               </div>
               <div class="doc-scroll-container"
