@@ -58,7 +58,7 @@ import {
   shouldRefreshWikiStatusAfterKnowledgePoll,
 } from './wikiStatusRefresh';
 import { getKnowledgeMoveProgress } from '@/api/knowledge-base';
-import { batchMoveKnowledgeToFolder } from '@/api/knowledge-folder';
+import { batchMoveKnowledgeToFolder, moveFolder } from '@/api/knowledge-folder';
 import FolderManageDialog from '@/views/knowledge/components/FolderManageDialog.vue';
 import MoveKnowledgeDialog from '@/views/knowledge/components/MoveKnowledgeDialog.vue';
 import FolderSelector from '@/views/knowledge/components/FolderSelector.vue';
@@ -384,9 +384,12 @@ const resetPage = () => { page = 1; scrollLoading = false; };
 // FolderSelector for folder move), so it works in both grid and list views.
 const moveKbDialogVisible = ref(false);
 const moveKbDialogIds = ref<string[]>([]);
-// Folder-move state
+// Move-knowledge-to-folder state
 const moveFolderDialogVisible = ref(false);
 const moveFolderKnowledgeIds = ref<string[]>([]);
+// Move-folder-to-folder state
+const folderMoveDialogVisible = ref(false);
+const folderToMove = ref<KnowledgeFolder | null>(null);
 let movePollTimer: ReturnType<typeof setInterval> | null = null;
 
 // View mode (grid / list) — persisted per browser
@@ -1408,6 +1411,28 @@ const handleMoveFolderConfirm = async (targetFolderId: string | null) => {
   }
 };
 
+// Open the move-folder dialog for a single folder (grid / list views).
+const handleMoveFolder = (folder: KnowledgeFolder) => {
+  folderToMove.value = folder;
+  loadFolderTree();
+  folderMoveDialogVisible.value = true;
+};
+
+// Confirm move-folder: move the folder itself to another parent folder.
+const handleConfirmFolderMove = async (targetFolderId: string | null) => {
+  if (!folderToMove.value) return;
+  try {
+    await moveFolder(kbId.value, folderToMove.value.id, { target_parent_folder_id: targetFolderId });
+    MessagePlugin.success(t('knowledgeFolder.moveFolderSuccess'));
+    folderToMove.value = null;
+    resetPage();
+    await loadKnowledgeFiles(kbId.value);
+  } catch (err) {
+    const message = (err as { message?: string })?.message || t('knowledgeFolder.moveFolderFailed');
+    MessagePlugin.error(message);
+  }
+};
+
 // Move-to-KB dialog confirmed: poll progress if async.
 const handleMoveKbDialogMoved = (taskId?: string) => {
   if (taskId) {
@@ -2242,10 +2267,13 @@ const handleListAction = (
   action: 'edit' | 'reparse' | 'cancel-parse' | 'move' | 'move-folder' | 'delete' | 'view-trace' | 'batch-manage', (feat(knowledge): move-to-folder + fix list-view move-to-KB)
   item: KnowledgeCard & { isFolder?: boolean },
 ) => {
-  // Handle folder deletion
+  // Handle folder actions
   if ((item as any).isFolder) {
     if (action === 'delete') {
       confirmDeleteFolder(item as any);
+    }
+    if (action === 'move-folder') {
+      handleMoveFolder(item as any);
     }
     return;
   }
@@ -2760,6 +2788,17 @@ async function createNewSession(value: string): Promise<void> {
     :tree-loading="treeLoading"
     :current-folder-id="currentFolderId"
     @confirm="handleMoveFolderConfirm"
+  />
+
+  <!-- Move a folder itself to another parent folder within the current KB -->
+  <FolderSelector
+    v-model:visible="folderMoveDialogVisible"
+    :title="t('knowledgeFolder.moveFolder')"
+    :folder-tree="folderTree"
+    :tree-loading="treeLoading"
+    :current-folder-id="folderToMove?.parent_folder_id || null"
+    :disabled-folder-ids="folderToMove ? [folderToMove.id] : []"
+    @confirm="handleConfirmFolderMove"
   />
 </template>
 <style>
@@ -4561,7 +4600,7 @@ async function createNewSession(value: string): Promise<void> {
     flex-shrink: 0;
   }
 
-  .folder-card-delete {
+  .folder-card-action {
     display: flex;
     align-items: center;
     justify-content: center;
@@ -4574,16 +4613,24 @@ async function createNewSession(value: string): Promise<void> {
     cursor: pointer;
     opacity: 0;
     transition: opacity 0.12s, color 0.12s;
-    margin-left: auto;
     flex-shrink: 0;
 
     &:hover {
-      color: var(--td-error-color);
-      background: var(--td-error-color-1);
+      color: var(--td-brand-color);
+      background: var(--td-brand-color-light);
+    }
+
+    &.folder-card-delete {
+      margin-left: auto;
+
+      &:hover {
+        color: var(--td-error-color);
+        background: var(--td-error-color-1);
+      }
     }
   }
 
-  &:hover .folder-card-delete {
+  &:hover .folder-card-action {
     opacity: 1;
   }
 

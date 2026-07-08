@@ -63,6 +63,7 @@ const emit = defineEmits<{
   (e: 'move-confirm'): void;
   (e: 'update:moveMode', mode: 'reuse_vectors' | 'reparse'): void;
   (e: 'reset-move-state'): void;
+  (e: 'move-folder', folder: KnowledgeItem): void;
 }>();
 
 const { t } = useI18n();
@@ -329,6 +330,10 @@ const handleAction = (action: 'edit' | 'reparse' | 'cancel-parse' | 'move' | 'de
 
         <div class="cell cell-actions" v-if="canEdit" @click.stop>
           <template v-if="item.isFolder">
+            <button class="row-more-btn" type="button" :aria-label="$t('knowledgeFolder.moveFolder')"
+              @click="emit('move-folder', item)">
+              <t-icon name="folder-import" size="16px" />
+            </button>
             <t-popconfirm
               theme="warning"
               :content="$t('knowledgeFolder.confirmDeleteFolder', { name: item.file_name || '' })"
