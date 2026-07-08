@@ -1433,7 +1433,7 @@ const handleMoveFolderConfirm = async (targetFolderId: string | null) => {
       MessagePlugin.success(t('knowledgeBase.moveToFolderSuccess'));
       handleRefresh();
     } catch (err) {
-      const message = (err as { message?: string })?.message || t('knowledgeBase.moveToFolderFailed');
+      const message = (err as { message?: string })?.message || '移动失败';
       MessagePlugin.error(message);
     }
     return;
@@ -1444,10 +1444,10 @@ const handleMoveFolderConfirm = async (targetFolderId: string | null) => {
     folderToMove.value = null;
     try {
       await moveFolder(kbId.value, folder.id, { target_parent_folder_id: targetFolderId });
-      MessagePlugin.success(t('knowledgeFolder.moveFolderSuccess'));
+      MessagePlugin.success('移动成功');
       handleRefresh();
     } catch (err) {
-      const message = (err as { message?: string })?.message || t('knowledgeFolder.moveFolderFailed');
+      const message = (err as { message?: string })?.message || '移动失败';
       MessagePlugin.error(message);
     }
     return;
@@ -1460,10 +1460,10 @@ const handleMoveFolderConfirm = async (targetFolderId: string | null) => {
       for (const folder of folders) {
         await moveFolder(kbId.value, folder.id, { target_parent_folder_id: targetFolderId });
       }
-      MessagePlugin.success(t('knowledgeFolder.moveFolderSuccess'));
+      MessagePlugin.success('移动成功');
       handleRefresh();
     } catch (err) {
-      const message = (err as { message?: string })?.message || t('knowledgeFolder.moveFolderFailed');
+      const message = (err as { message?: string })?.message || '移动失败';
       MessagePlugin.error(message);
     }
   }
@@ -1485,10 +1485,10 @@ const handleConfirmFolderMove = async (targetFolderId: string | null) => {
     folderToMove.value = null;
     try {
       await moveFolder(kbId.value, folder.id, { target_parent_folder_id: targetFolderId });
-      MessagePlugin.success(t('knowledgeFolder.moveFolderSuccess'));
+      MessagePlugin.success('移动成功');
       handleRefresh();
     } catch (err) {
-      const message = (err as { message?: string })?.message || t('knowledgeFolder.moveFolderFailed');
+      const message = (err as { message?: string })?.message || '移动失败';
       MessagePlugin.error(message);
     }
     return;
@@ -1506,10 +1506,10 @@ const handleConfirmFolderMove = async (targetFolderId: string | null) => {
         await batchMoveKnowledgeToFolder({ knowledge_ids: batchMoveKnowledgeIds.value, folder_id: targetFolderId });
         batchMoveKnowledgeIds.value = [];
       }
-      MessagePlugin.success(t('knowledgeFolder.moveFolderSuccess'));
+      MessagePlugin.success('移动成功');
       handleRefresh();
     } catch (err) {
-      const message = (err as { message?: string })?.message || t('knowledgeFolder.moveFolderFailed');
+      const message = (err as { message?: string })?.message || '移动失败';
       MessagePlugin.error(message);
     }
   } else if (batchMoveKnowledgeIds.value.length > 0) {
@@ -1521,7 +1521,7 @@ const handleConfirmFolderMove = async (targetFolderId: string | null) => {
       MessagePlugin.success(t('knowledgeBase.moveToFolderSuccess'));
       handleRefresh();
     } catch (err) {
-      const message = (err as { message?: string })?.message || t('knowledgeBase.moveToFolderFailed');
+      const message = (err as { message?: string })?.message || '移动失败';
       MessagePlugin.error(message);
     }
   }
