@@ -13,7 +13,7 @@
           <div class="item-checkbox" @click.stop>
             <t-checkbox
               :checked="selectedKeys.includes(item.id)"
-              @change="(checked) => handleCheckChange(checked, item.id)"
+              @change="(checked: boolean) => handleCheckChange(checked, item.id)"
             />
           </div>
 
@@ -33,6 +33,11 @@
             <t-tag v-for="tag in item.tags.slice(0, 2)" :key="tag.id" size="small">
               {{ tag.name }}
             </t-tag>
+          </div>
+          <div class="item-actions">
+            <t-button v-if="item.type === 'folder'" variant="text" size="small" @click.stop="emit('move-folder', item)">
+              <t-icon name="folder-import" />
+            </t-button>
           </div>
         </t-card>
       </div>
@@ -65,7 +70,8 @@ const emit = defineEmits<{
   (e: 'enter-folder', folderId: string): void;
   (e: 'batch-move', items: any[]): void;
   (e: 'batch-delete', items: any[]): void;
-}>();
+  (e: 'move-folder', folder: KnowledgeFolder): void;
+}>();;
 
 const selectedKeys = ref<string[]>([]);
 
@@ -173,6 +179,13 @@ const handleBatchDelete = () => {
       justify-content: center;
       gap: 4px;
       margin-top: 8px;
+    }
+
+    .item-actions {
+      position: absolute;
+      bottom: 8px;
+      right: 8px;
+      z-index: 1;
     }
   }
 }

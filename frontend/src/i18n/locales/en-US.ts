@@ -561,6 +561,7 @@ export default {
     moveToFolder: 'Move to Folder',
     moveToFolderSuccess: 'Moved to the target folder',
     moveToFolderFailed: 'Failed to move to folder',
+    noKnowledgeSelected: 'No knowledge entries selected (folders cannot be moved)',
     moveToKnowledgeBase: 'Move to Knowledge Base',
     moveSelectTarget: 'Select target knowledge base',
     moveNoTargets: 'No compatible knowledge bases found (same type and embedding model required)',

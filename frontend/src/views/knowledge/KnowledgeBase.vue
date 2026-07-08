@@ -1380,7 +1380,16 @@ const handleMoveToFolder = (item: KnowledgeCard) => {
 const handleBatchMoveToFolder = () => {
   const ids = [...selectedIds.value];
   if (ids.length === 0) return;
-  moveFolderKnowledgeIds.value = ids;
+  // Filter out folders — the batch-move-folder API only handles knowledge entries.
+  const knowledgeIds = ids.filter((id) => {
+    const item = cardList.value.find((c) => c.id === id);
+    return item && !item.isFolder;
+  });
+  if (knowledgeIds.length === 0) {
+    MessagePlugin.warning(t('knowledgeBase.noKnowledgeSelected'));
+    return;
+  }
+  moveFolderKnowledgeIds.value = knowledgeIds;
   moveFolderDialogVisible.value = true;
 };
 

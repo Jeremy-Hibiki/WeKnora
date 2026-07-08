@@ -22,8 +22,10 @@
         <span v-else>{{ formatFileSize(row.file_size) }}</span>
       </template>
 
-      <template #tags="{ row }">
-        <t-tag v-for="tag in row.tags" :key="tag.id" size="small">{{ tag.name }}</t-tag>
+      <template #operation="{ row }">
+        <t-button v-if="row.type === 'folder'" variant="text" size="small" @click="emit('move-folder', row)">
+          <t-icon name="folder-import" />
+        </t-button>
       </template>
     </t-table>
 
@@ -54,16 +56,18 @@ const emit = defineEmits<{
   (e: 'enter-folder', folderId: string): void;
   (e: 'batch-move', items: any[]): void;
   (e: 'batch-delete', items: any[]): void;
-}>();
+  (e: 'move-folder', folder: KnowledgeFolder): void;
+}>();;
 
 const selectedKeys = ref<string[]>([]);
 
 const columns = [
   { colKey: 'row-select', type: 'multiple', width: 50 },
-  { colKey: 'name', title: '名称', width: '40%' },
+  { colKey: 'name', title: '名称', width: '35%' },
   { colKey: 'updated_at', title: '修改时间', width: '20%' },
   { colKey: 'size', title: '大小', width: '15%' },
-  { colKey: 'tags', title: '标签', width: '25%' },
+  { colKey: 'tags', title: '标签', width: '20%' },
+  { colKey: 'operation', title: '操作', width: '10%' },
 ];
 
 const tableData = computed(() => {

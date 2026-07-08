@@ -49,6 +49,7 @@
       @enter-folder="handleEnterFolder"
       @batch-move="handleBatchMove"
       @batch-delete="handleBatchDelete"
+      @move-folder="handleMoveFolder"
     />
 
     <!-- 宫格视图 -->
@@ -60,6 +61,7 @@
       @enter-folder="handleEnterFolder"
       @batch-move="handleBatchMove"
       @batch-delete="handleBatchDelete"
+      @move-folder="handleMoveFolder"
     />
 
     <!-- 文件夹管理对话框 -->
@@ -81,17 +83,31 @@
       :current-folder-id="currentFolderId"
       @confirm="handleConfirmMove"
     />
+
+    <!-- 文件夹选择器（用于单个文件夹移动） -->
+    <FolderSelector
+      v-model:visible="folderMoveSelectorVisible"
+      title="移动文件夹到"
+      :folder-tree="folderTree"
+      :tree-loading="treeLoading"
+      :current-folder-id="folderToMove?.parent_folder_id || null"
+      :disabled-folder-ids="folderToMove ? [folderToMove.id] : []"
+      @confirm="handleConfirmFolderMove"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue';
+import { MessagePlugin } from 'tdesign-vue-next';
+import { useI18n } from 'vue-i18n';
 import FolderBreadcrumb from '@/views/knowledge/components/FolderBreadcrumb.vue';
 import FolderListView from '@/views/knowledge/components/FolderListView.vue';
 import FolderGridView from '@/views/knowledge/components/FolderGridView.vue';
 import FolderManageDialog from '@/views/knowledge/components/FolderManageDialog.vue';
 import FolderSelector from '@/views/knowledge/components/FolderSelector.vue';
 import { useKnowledgeFolder } from '@/composables/useKnowledgeFolder';
+import { moveFolder } from '@/api/knowledge-folder';
 import type { KnowledgeFolder } from '@/types/knowledgeFolder';
 
 interface Props {
@@ -101,6 +117,8 @@ interface Props {
   canEdit?: boolean;
   showBreadcrumb?: boolean;
 }
+
+const { t } = useI18n();
 
 const props = withDefaults(defineProps<Props>(), {
   loading: false,
@@ -162,6 +180,30 @@ const handleCreateFolder = () => {
 // Folder dialog success
 const handleFolderDialogSuccess = () => {
   emit('refresh');
+};
+
+// Single folder move
+const folderMoveSelectorVisible = ref(false);
+const folderToMove = ref<KnowledgeFolder | null>(null);
+
+// Open folder move dialog
+const handleMoveFolder = (folder: KnowledgeFolder) => {
+  folderToMove.value = folder;
+  loadFolderTree();
+  folderMoveSelectorVisible.value = true;
+};
+
+// Confirm folder move
+const handleConfirmFolderMove = async (targetFolderId: string | null) => {
+  if (!folderToMove.value) return;
+  try {
+    await moveFolder(props.kbId, folderToMove.value.id, { target_parent_folder_id: targetFolderId });
+    MessagePlugin.success(t('knowledgeFolder.moveFolderSuccess'));
+    folderToMove.value = null;
+    emit('refresh');
+  } catch (error: any) {
+    MessagePlugin.error(error.message || t('knowledgeFolder.moveFolderFailed'));
+  }
 };
 
 // Batch move

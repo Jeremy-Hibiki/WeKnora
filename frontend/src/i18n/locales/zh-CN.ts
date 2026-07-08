@@ -562,6 +562,7 @@ export default {
     moveToFolder: "移动到文件夹",
     moveToFolderSuccess: "已移动到目标文件夹",
     moveToFolderFailed: "移动到文件夹失败",
+    noKnowledgeSelected: "未选中可移动的知识条目（文件夹不能移动）",
     moveToKnowledgeBase: "移动到知识库",
     moveSelectTarget: "选择目标知识库",
     moveNoTargets: "没有兼容的目标知识库（需要相同类型和 Embedding 模型）",
