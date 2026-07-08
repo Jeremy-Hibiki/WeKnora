@@ -92,16 +92,62 @@ const collectDroppedFiles = async (event: DragEvent): Promise<File[]> => {
         return [];
     }
 
-    const files = await Promise.all(dataTransferItems.map(item => new Promise<File | null>((resolve) => {
-        const fileEntry = (item as any).webkitGetAsEntry?.();
-        if (fileEntry?.isFile && typeof fileEntry.file === 'function') {
-            fileEntry.file((file: File) => resolve(file), () => resolve(null));
+    // Recursively walk directory entries so dropping a whole folder works.
+    // Each File is stamped with webkitRelativePath so downstream code can
+    // reconstruct the directory tree.
+    const traverseEntry = (entry: FileSystemEntry, prefix: string): Promise<File[]> => {
+        return new Promise((resolve) => {
+            if (entry.isFile) {
+                const fileEntry = entry as FileSystemFileEntry;
+                fileEntry.file((file: File) => {
+                    // Attach the relative path so the upload flow can build folders.
+                    try {
+                        Object.defineProperty(file, 'webkitRelativePath', {
+                            value: prefix + file.name,
+                            configurable: true,
+                        });
+                    } catch {
+                        // Some browsers forbid redefining; ignore — name still usable.
+                    }
+                    resolve([file]);
+                }, () => resolve([]));
+                return;
+            }
+            if (entry.isDirectory) {
+                const dirReader = (entry as FileSystemDirectoryEntry).createReader();
+                const dirPath = prefix + entry.name + '/';
+                const readBatch = (): void => {
+                    dirReader.readEntries(async (entries: FileSystemEntry[]) => {
+                        if (entries.length === 0) {
+                            resolve(allDirFiles);
+                            return;
+                        }
+                        const batch = await Promise.all(entries.map(e => traverseEntry(e, dirPath)));
+                        for (const f of batch.flat()) allDirFiles.push(f);
+                        // readEntries returns in batches of ≤100; keep reading until empty.
+                        readBatch();
+                    }, () => resolve(allDirFiles));
+                };
+                const allDirFiles: File[] = [];
+                readBatch();
+                return;
+            }
+            resolve([]);
+        });
+    };
+
+    const files = await Promise.all(dataTransferItems.map(item => new Promise<File[]>(async (resolve) => {
+        const entry = (item as unknown as { webkitGetAsEntry?: () => FileSystemEntry | null }).webkitGetAsEntry?.();
+        if (entry) {
+            resolve(await traverseEntry(entry, ''));
             return;
         }
-        resolve(null);
+        // Fallback: item is a plain file.
+        const f = item.getAsFile();
+        resolve(f ? [f] : []);
     })));
 
-    return files.filter((file): file is File => file instanceof File);
+    return files.flat().filter((file): file is File => file instanceof File);
 }
 
 // 检查知识库初始化状态
@@ -195,6 +241,20 @@ const handleGlobalDrop = async (event: DragEvent) => {
     
     const isInitialized = await checkKnowledgeBaseInitialization();
     if (!isInitialized) {
+        return;
+    }
+
+    // Folder drop: any file carrying a webkitRelativePath means a directory
+    // was dropped — route all files through the KB folder-upload batch endpoint
+    // instead of per-file single uploads.
+    const hasFolder = droppedFiles.some(f => {
+        const rp = (f as File & { webkitRelativePath?: unknown }).webkitRelativePath;
+        return typeof rp === 'string' && rp.includes('/');
+    });
+    if (hasFolder) {
+        window.dispatchEvent(new CustomEvent('weknora:folder-drop', {
+            detail: { files: droppedFiles }
+        }));
         return;
     }
 

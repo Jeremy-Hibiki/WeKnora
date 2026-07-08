@@ -15,32 +15,32 @@ conversation:
   rerank_top_k: 30
   fallback_strategy: "model"
   fallback_response: "Sorry, I am unable to answer this question."
-  fallback_prompt_id: "default_fallback_prompt"  # from prompt_templates/fallback.yaml (mode: "model")
+  fallback_prompt_id: "default_fallback_prompt" # from prompt_templates/fallback.yaml (mode: "model")
   enable_rewrite: true
   enable_query_expansion: true
   enable_rerank: true
-  rewrite_prompt_id: "default_rewrite"  # from prompt_templates/rewrite.yaml (content + user fields)
-  generate_summary_prompt_id: "default_summary"  # from prompt_templates/generate_summary.yaml
-  generate_session_title_prompt_id: "default_session_title"  # from prompt_templates/generate_session_title.yaml
+  rewrite_prompt_id: "default_rewrite" # from prompt_templates/rewrite.yaml (content + user fields)
+  generate_summary_prompt_id: "default_summary" # from prompt_templates/generate_summary.yaml
+  generate_session_title_prompt_id: "default_session_title" # from prompt_templates/generate_session_title.yaml
   summary:
     max_input_chars: 16384
     repeat_penalty: 1.0
     temperature: 0.3
-    max_completion_tokens: 2048
+    max_completion_tokens: 20480
     no_match_prefix: |-
       <think>
       </think>
       NO_MATCH
-    prompt_id: "default_kb"  # from prompt_templates/system_prompt.yaml
-    context_template_id: "default_context"  # from prompt_templates/context_template.yaml
-  extract_entities_prompt_id: "default_extract_entities"          # from prompt_templates/graph_extraction.yaml
-  extract_relationships_prompt_id: "default_extract_relationships"  # from prompt_templates/graph_extraction.yaml
-  generate_questions_prompt_id: "default_generate_questions"        # from prompt_templates/generate_questions.yaml
+    prompt_id: "default_kb" # from prompt_templates/system_prompt.yaml
+    context_template_id: "default_context" # from prompt_templates/context_template.yaml
+  extract_entities_prompt_id: "default_extract_entities" # from prompt_templates/graph_extraction.yaml
+  extract_relationships_prompt_id: "default_extract_relationships" # from prompt_templates/graph_extraction.yaml
+  generate_questions_prompt_id: "default_generate_questions" # from prompt_templates/generate_questions.yaml
 
 # Knowledge base configuration
 knowledge_base:
-  chunk_size: 512
-  chunk_overlap: 50
+  chunk_size: 2048
+  chunk_overlap: 256
   split_markers: ["\n\n", "\n", "。"]
   document_process_timeout: 2h
   image_processing:
@@ -106,8 +106,10 @@ extract:
     with_no_tag: |
       Please randomly generate a text with freely chosen content, with a word count between [50-200].
 
-
 # Tenant configuration
 tenant:
   # Enable cross-tenant access (can be enabled for intranet environments)
-  enable_cross_tenant_access: false
+  enable_cross_tenant_access: true
+
+oidc_auth:
+  enable: false

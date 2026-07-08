@@ -1169,6 +1169,16 @@ const handleOpenKnowledgeEvent = (e: Event) => {
   tryAutoOpenDocument();
 };
 
+const handleFolderDropEvent = async (event: Event) => {
+  if (!ensureDocumentKbReady()) return;
+  const detail = (event as CustomEvent<{ files: File[] }>).detail;
+  const files = detail?.files ?? [];
+  if (files.length === 0) return;
+  // Route through the upload-confirm dialog so the user can pick process
+  // options, then executeFolderUploadBatch handles the batch endpoint.
+  openUploadConfirmDialog(files);
+};
+
 onMounted(() => {
   loadKnowledgeList();
   editorResources.ensureParserEngines();
@@ -1176,12 +1186,14 @@ onMounted(() => {
   window.addEventListener('knowledgeFileUploaded', handleFileUploaded as EventListener);
   window.addEventListener('openURLImportDialog', handleOpenURLImportDialog as EventListener);
   window.addEventListener('weknora:open-knowledge', handleOpenKnowledgeEvent as EventListener);
+  window.addEventListener('weknora:folder-drop', handleFolderDropEvent as EventListener);
 });
 
 onUnmounted(() => {
   window.removeEventListener('knowledgeFileUploaded', handleFileUploaded as EventListener);
   window.removeEventListener('openURLImportDialog', handleOpenURLImportDialog as EventListener);
   window.removeEventListener('weknora:open-knowledge', handleOpenKnowledgeEvent as EventListener);
+  window.removeEventListener('weknora:folder-drop', handleFolderDropEvent as EventListener);
   stopMovePoll();
   if (timeout !== null) {
     clearTimeout(timeout);
