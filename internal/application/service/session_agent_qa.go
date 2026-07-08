@@ -306,6 +306,13 @@ func (s *sessionService) buildAgentConfig(
 	if err != nil {
 		return nil, fmt.Errorf("build search targets: %w", err)
 	}
+	// Propagate folder scope from request to every search target
+	if len(req.FolderIDs) > 0 {
+		for _, st := range searchTargets {
+			st.FolderIDs = req.FolderIDs
+			st.IncludeSubfolders = req.IncludeSubfolders
+		}
+	}
 	agentConfig.SearchTargets = searchTargets
 	logger.Infof(ctx, "Agent search targets built: %d targets", len(searchTargets))
 

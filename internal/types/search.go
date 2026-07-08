@@ -41,6 +41,11 @@ type SearchTarget struct {
 	// this so tag filtering limits the candidate documents without loading every
 	// matching document chunk as context.
 	DisableDirectLoad bool `json:"disable_direct_load,omitempty"`
+	// FolderIDs restricts retrieval to knowledge entries in the specified folders.
+	FolderIDs []string `json:"folder_ids,omitempty"`
+	// IncludeSubfolders, when true alongside non-empty FolderIDs, includes
+	// knowledge entries from all descendant subfolders.
+	IncludeSubfolders bool `json:"include_subfolders,omitempty"`
 }
 
 // SearchTargets is a list of search targets, pre-computed at request entry point
