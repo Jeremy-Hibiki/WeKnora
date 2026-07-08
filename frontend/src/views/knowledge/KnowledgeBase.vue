@@ -390,11 +390,13 @@ const moveFolderKnowledgeIds = ref<string[]>([]);
 // Move-folder-to-folder state
 const folderMoveDialogVisible = ref(false);
 const folderToMove = ref<KnowledgeFolder | null>(null);
-const pendingMoveFolders = ref<KnowledgeFolder[]>([]);
+// Batch move state: folders + knowledge IDs to move together.
+const batchMoveFolders = ref<KnowledgeFolder[]>([]);
+const batchMoveKnowledgeIds = ref<string[]>([]);
 // Disabled folder IDs for the move-folder dialog.
 const folderMoveDisabledIds = computed(() => {
   if (folderToMove.value) return [folderToMove.value.id];
-  return pendingMoveFolders.value.map((f) => f.id);
+  return batchMoveFolders.value.map((f) => f.id);
 });
 let movePollTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -1385,7 +1387,7 @@ const handleMoveToFolder = (item: KnowledgeCard) => {
   moveFolderDialogVisible.value = true;
 };
 
-// Batch move-to-folder: selected documents in batch mode.
+// Batch move-to-folder: selected documents and folders in batch mode.
 const handleBatchMoveToFolder = () => {
   const ids = [...selectedIds.value];
   if (ids.length === 0) return;
@@ -1402,24 +1404,11 @@ const handleBatchMoveToFolder = () => {
       }
     }
   }
-  // If folders selected, open folder-to-folder move dialog.
-  if (foldersToMove.length > 0) {
-    if (foldersToMove.length === 1) {
-      // Single folder → move-to-folder dialog
-      folderToMove.value = foldersToMove[0];
-      loadFolderTree();
-      folderMoveDialogVisible.value = true;
-    } else {
-      // Multiple folders → open folder selector, then batch-move all to target.
-      pendingMoveFolders.value = foldersToMove;
-      loadFolderTree();
-      folderMoveDialogVisible.value = true;
-    }
-    return;
-  }
-  // All knowledge entries → move-to-folder dialog.
-  moveFolderKnowledgeIds.value = knowledgeIds;
-  moveFolderDialogVisible.value = true;
+  // Unified: open folder selector, move both folders and knowledge entries.
+  batchMoveFolders.value = foldersToMove;
+  batchMoveKnowledgeIds.value = knowledgeIds;
+  loadFolderTree();
+  folderMoveDialogVisible.value = true;
 };
 
 // Confirm move-to-folder: batch-move knowledge entries or folder(s).
@@ -1455,9 +1444,9 @@ const handleMoveFolderConfirm = async (targetFolderId: string | null) => {
     return;
   }
   // Case 3: Multiple folders → batch-move each one.
-  if (pendingMoveFolders.value.length > 0) {
-    const folders = pendingMoveFolders.value;
-    pendingMoveFolders.value = [];
+  if (batchMoveFolders.value.length > 0) {
+    const folders = batchMoveFolders.value;
+    batchMoveFolders.value = [];
     try {
       for (const folder of folders) {
         await moveFolder(kbId.value, folder.id, { target_parent_folder_id: targetFolderId });
@@ -1497,12 +1486,16 @@ const handleConfirmFolderMove = async (targetFolderId: string | null) => {
     return;
   }
   // Multiple folders batch move.
-  if (pendingMoveFolders.value.length > 0) {
-    const folders = pendingMoveFolders.value;
-    pendingMoveFolders.value = [];
+  if (batchMoveFolders.value.length > 0) {
+    const folders = batchMoveFolders.value;
+    batchMoveFolders.value = [];
     try {
       for (const folder of folders) {
         await moveFolder(kbId.value, folder.id, { target_parent_folder_id: targetFolderId });
+      }
+      // Also move knowledge entries if any.
+      if (batchMoveKnowledgeIds.value.length > 0) {
+        await batchMoveKnowledgeToFolder({ knowledge_ids: batchMoveKnowledgeIds.value, folder_id: targetFolderId });
       }
       MessagePlugin.success(t('knowledgeFolder.moveFolderSuccess'));
       resetPage();
