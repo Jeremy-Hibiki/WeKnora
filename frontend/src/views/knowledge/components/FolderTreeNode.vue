@@ -9,12 +9,15 @@
       :style="{ paddingLeft: `${depth * 20 + 12}px` }"
       @click="handleSelect"
     >
-      <t-icon
+      <span
         v-if="hasChildren"
-        :name="expanded ? 'chevron-down' : 'chevron-right'"
         class="expand-icon"
         @click.stop="toggleExpand"
-      />
+      >
+        <t-icon
+          :name="expanded ? 'chevron-down' : 'chevron-right'"
+        />
+      </span>
       <folder-icon class="folder-icon" />
       <span class="folder-name" :title="folder.name">{{ folder.name }}</span>
       <span v-if="folder.knowledge_count !== undefined" class="folder-count">
@@ -62,11 +65,13 @@ const emit = defineEmits<{
 // Shared expand-all state from FolderSelector (provide/inject). When the user
 // toggles "expand all", every node follows; manual chevron clicks still override
 // locally until the next global toggle.
+// Shared expand-all control from FolderSelector. When the user toggles
+// "expand all/collapse all", every node follows; manual chevron clicks
+// still override locally until the next global toggle.
 const expandAllState = inject<Ref<boolean>>('folder-selector-expand-all', ref(true));
 
 const expanded = ref(expandAllState.value);
 
-// Keep this node in sync with the global toggle.
 watch(expandAllState, (v) => {
   expanded.value = v;
 });
@@ -122,6 +127,8 @@ const handleSelect = () => {
     }
 
     .expand-icon {
+      display: inline-flex;
+      align-items: center;
       flex-shrink: 0;
       font-size: 16px;
       cursor: pointer;
