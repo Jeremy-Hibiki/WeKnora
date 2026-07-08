@@ -1412,6 +1412,13 @@ const handleBatchMoveToFolder = () => {
   folderMoveDialogVisible.value = true;
 };
 
+// Refresh knowledge files and folder tree
+const handleRefresh = async () => {
+  resetPage();
+  await loadKnowledgeFiles(kbId.value);
+  loadFolderTree();
+};
+
 // Confirm move-to-folder: batch-move knowledge entries or folder(s).
 const handleMoveFolderConfirm = async (targetFolderId: string | null) => {
   // Case 1: Knowledge entries (existing flow).
@@ -1421,8 +1428,7 @@ const handleMoveFolderConfirm = async (targetFolderId: string | null) => {
     try {
       await batchMoveKnowledgeToFolder({ knowledge_ids: ids, folder_id: targetFolderId });
       MessagePlugin.success(t('knowledgeBase.moveToFolderSuccess'));
-      resetPage();
-      await loadKnowledgeFiles(kbId.value);
+      handleRefresh();
     } catch (err) {
       const message = (err as { message?: string })?.message || t('knowledgeBase.moveToFolderFailed');
       MessagePlugin.error(message);
@@ -1436,8 +1442,7 @@ const handleMoveFolderConfirm = async (targetFolderId: string | null) => {
     try {
       await moveFolder(kbId.value, folder.id, { target_parent_folder_id: targetFolderId });
       MessagePlugin.success(t('knowledgeFolder.moveFolderSuccess'));
-      resetPage();
-      await loadKnowledgeFiles(kbId.value);
+      handleRefresh();
     } catch (err) {
       const message = (err as { message?: string })?.message || t('knowledgeFolder.moveFolderFailed');
       MessagePlugin.error(message);
@@ -1453,8 +1458,7 @@ const handleMoveFolderConfirm = async (targetFolderId: string | null) => {
         await moveFolder(kbId.value, folder.id, { target_parent_folder_id: targetFolderId });
       }
       MessagePlugin.success(t('knowledgeFolder.moveFolderSuccess'));
-      resetPage();
-      await loadKnowledgeFiles(kbId.value);
+      handleRefresh();
     } catch (err) {
       const message = (err as { message?: string })?.message || t('knowledgeFolder.moveFolderFailed');
       MessagePlugin.error(message);
@@ -1479,8 +1483,7 @@ const handleConfirmFolderMove = async (targetFolderId: string | null) => {
     try {
       await moveFolder(kbId.value, folder.id, { target_parent_folder_id: targetFolderId });
       MessagePlugin.success(t('knowledgeFolder.moveFolderSuccess'));
-      resetPage();
-      await loadKnowledgeFiles(kbId.value);
+      handleRefresh();
     } catch (err) {
       const message = (err as { message?: string })?.message || t('knowledgeFolder.moveFolderFailed');
       MessagePlugin.error(message);
@@ -1501,8 +1504,7 @@ const handleConfirmFolderMove = async (targetFolderId: string | null) => {
         batchMoveKnowledgeIds.value = [];
       }
       MessagePlugin.success(t('knowledgeFolder.moveFolderSuccess'));
-      resetPage();
-      await loadKnowledgeFiles(kbId.value);
+      handleRefresh();
     } catch (err) {
       const message = (err as { message?: string })?.message || t('knowledgeFolder.moveFolderFailed');
       MessagePlugin.error(message);
@@ -1514,8 +1516,7 @@ const handleConfirmFolderMove = async (targetFolderId: string | null) => {
     try {
       await batchMoveKnowledgeToFolder({ knowledge_ids: ids, folder_id: targetFolderId });
       MessagePlugin.success(t('knowledgeBase.moveToFolderSuccess'));
-      resetPage();
-      await loadKnowledgeFiles(kbId.value);
+      handleRefresh();
     } catch (err) {
       const message = (err as { message?: string })?.message || t('knowledgeBase.moveToFolderFailed');
       MessagePlugin.error(message);
@@ -2724,6 +2725,13 @@ async function createNewSession(value: string): Promise<void> {
                       :tooltip="t('knowledgeBase.addDocument')" placement="bottom-right" @files="handleUploadSourceFiles"
                       @url="handleUploadSourceUrl" @manual="handleManualCreate" />
                   </div>
+                </div>
+                <div class="doc-filter-actions">
+                  <t-tooltip :content="$t('knowledgeBase.refresh')" placement="top">
+                    <button type="button" class="content-bar-icon-btn" @click="handleRefresh">
+                      <t-icon name="refresh" size="16px" />
+                    </button>
+                  </t-tooltip>
                 </div>
               </div>
               <div class="doc-scroll-container"

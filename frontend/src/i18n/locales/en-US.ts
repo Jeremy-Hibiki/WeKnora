@@ -445,6 +445,7 @@ export default {
     uploadFileDesc: 'Supports PDF, Word, TXT, images, audio, etc.',
     importURL: 'Import from URL',
     addDocument: 'Add Document',
+    refresh: 'Refresh',
     importURLDesc: 'Import via URL link',
     importURLTitle: 'Import from URL',
     manualCreate: 'Manual Create',

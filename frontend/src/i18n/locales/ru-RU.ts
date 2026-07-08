@@ -642,6 +642,7 @@ export default {
       childShort: 'потомок',
     },
     addDocument: 'Добавить документ',
+    refresh: 'Обновить',
     createdAt: 'Создано',
     updatedAt: 'Обновлено',
     clickToViewFull: 'Нажмите для полного просмотра',

@@ -444,6 +444,7 @@ export default {
     uploadFileDesc: "支持 PDF、Word、TXT、图片、音频等",
     importURL: "导入网页",
     addDocument: "添加文档",
+    refresh: "刷新",
     importURLDesc: "通过URL链接导入",
     importURLTitle: "导入网页",
     manualCreate: "手动创建",
