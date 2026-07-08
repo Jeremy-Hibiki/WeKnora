@@ -45,6 +45,8 @@ const props = defineProps<{
   moveSelectedTargetName: string;
   moveMode: 'reuse_vectors' | 'reparse';
   moveSubmitting: boolean;
+  /** Whether the current KB has any folders (gates the "move to folder" menu item). */
+  folderTreePresent?: boolean;
 }>();
 
 const emit = defineEmits<{

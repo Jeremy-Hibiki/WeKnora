@@ -57,8 +57,11 @@ import {
   knowledgeNeedsStatusPolling,
   shouldRefreshWikiStatusAfterKnowledgePoll,
 } from './wikiStatusRefresh';
-import { listMoveTargets, moveKnowledge, getKnowledgeMoveProgress } from '@/api/knowledge-base';
+import { getKnowledgeMoveProgress } from '@/api/knowledge-base';
+import { batchMoveKnowledgeToFolder } from '@/api/knowledge-folder';
 import FolderManageDialog from '@/views/knowledge/components/FolderManageDialog.vue';
+import MoveKnowledgeDialog from '@/views/knowledge/components/MoveKnowledgeDialog.vue';
+import FolderSelector from '@/views/knowledge/components/FolderSelector.vue';
 import { useKnowledgeFolder } from '@/composables/useKnowledgeFolder';
 import type { KnowledgeFolder } from '@/types/knowledgeFolder';
 import { useI18n } from 'vue-i18n';
@@ -316,9 +319,6 @@ const showKbDetailContextualGuide = computed(() => {
 
 const onVisibleChange = (visible: boolean) => {
   _onVisibleChange(visible);
-  if (!visible) {
-    moveMenuMode.value = 'normal';
-  }
 };
 
 /** Per-knowledge cache: whether /spans has a real trace (see knowledgeSpansPayloadHasTrace). */
@@ -380,15 +380,13 @@ let pageSize = 35;
 let scrollLoading = false;
 const resetPage = () => { page = 1; scrollLoading = false; };
 
-// Move state — inline in card menu
-const moveMenuMode = ref<'normal' | 'targets' | 'confirm'>('normal');
-const moveKnowledgeId = ref('');
-const moveTargetKbs = ref<any[]>([]);
-const moveTargetsLoading = ref(false);
-const moveSelectedTargetId = ref('');
-const moveSelectedTargetName = ref('');
-const moveMode = ref<'reuse_vectors' | 'reparse'>('reuse_vectors');
-const moveSubmitting = ref(false);
+// Move state — driven by dialogs (MoveKnowledgeDialog for KB move,
+// FolderSelector for folder move), so it works in both grid and list views.
+const moveKbDialogVisible = ref(false);
+const moveKbDialogIds = ref<string[]>([]);
+// Folder-move state
+const moveFolderDialogVisible = ref(false);
+const moveFolderKnowledgeIds = ref<string[]>([]);
 let movePollTimer: ReturnType<typeof setInterval> | null = null;
 
 // View mode (grid / list) — persisted per browser
@@ -1362,62 +1360,50 @@ const onReparseMenuClick = (index: number, item: KnowledgeCard) => {
   }
 };
 
-const handleMoveKnowledge = async (item: KnowledgeCard) => {
-  moveKnowledgeId.value = item.id;
-  moveMenuMode.value = 'targets';
-  moveTargetsLoading.value = true;
-  moveTargetKbs.value = [];
+// Open the move-to-KB dialog for a single document. Works for both grid and
+// list views because the target selection lives in a dialog, not an inline
+// submenu that only the grid popup renders.
+const handleMoveKnowledge = (item: KnowledgeCard) => {
+  moveKbDialogIds.value = [item.id];
+  moveKbDialogVisible.value = true;
+};
+
+// Open the move-to-folder dialog for a single document.
+const handleMoveToFolder = (item: KnowledgeCard) => {
+  moveFolderKnowledgeIds.value = [item.id];
+  moveFolderDialogVisible.value = true;
+};
+
+// Batch move-to-folder: selected documents in batch mode.
+const handleBatchMoveToFolder = () => {
+  const ids = [...selectedIds.value];
+  if (ids.length === 0) return;
+  moveFolderKnowledgeIds.value = ids;
+  moveFolderDialogVisible.value = true;
+};
+
+// Confirm move-to-folder: call the folder-move API and refresh.
+const handleMoveFolderConfirm = async (targetFolderId: string | null) => {
+  const ids = moveFolderKnowledgeIds.value;
+  if (ids.length === 0) return;
   try {
-    const res: any = await listMoveTargets(kbId.value);
-    moveTargetKbs.value = res.data || [];
-  } catch {
-    moveTargetKbs.value = [];
-  } finally {
-    moveTargetsLoading.value = false;
+    await batchMoveKnowledgeToFolder({ knowledge_ids: ids, folder_id: targetFolderId });
+    MessagePlugin.success(t('knowledgeBase.moveToFolderSuccess'));
+    resetPage();
+    await loadKnowledgeFiles(kbId.value);
+  } catch (err) {
+    const message = (err as { message?: string })?.message || t('knowledgeBase.moveToFolderFailed');
+    MessagePlugin.error(message);
   }
 };
 
-const handleMoveSelectTarget = (kb: any) => {
-  moveSelectedTargetId.value = kb.id;
-  moveSelectedTargetName.value = kb.name;
-  moveMode.value = 'reuse_vectors';
-  moveMenuMode.value = 'confirm';
-};
-
-const handleMoveBack = () => {
-  if (moveMenuMode.value === 'confirm') {
-    moveMenuMode.value = 'targets';
+// Move-to-KB dialog confirmed: poll progress if async.
+const handleMoveKbDialogMoved = (taskId?: string) => {
+  if (taskId) {
+    startMovePoll(taskId);
   } else {
-    moveMenuMode.value = 'normal';
-  }
-};
-
-const handleMoveConfirm = async () => {
-  if (!moveSelectedTargetId.value || moveSubmitting.value) return;
-  moveSubmitting.value = true;
-  try {
-    const res: any = await moveKnowledge({
-      knowledge_ids: [moveKnowledgeId.value],
-      source_kb_id: kbId.value,
-      target_kb_id: moveSelectedTargetId.value,
-      mode: moveMode.value,
-    });
-    const taskId = res.data?.task_id;
-    MessagePlugin.info(t('knowledgeBase.moveStarted'));
-    // Close the card menu
-    moveMenuMode.value = 'normal';
-    cardList.value.forEach(c => { c.isMore = false; });
-
-    if (taskId) {
-      startMovePoll(taskId);
-    } else {
-      moveSubmitting.value = false;
-      resetPage(); // Reset page counter when reloading files after move
-      loadKnowledgeFiles(kbId.value);
-    }
-  } catch (e: any) {
-    MessagePlugin.error(e?.message || t('knowledgeBase.moveFailed'));
-    moveSubmitting.value = false;
+    resetPage();
+    loadKnowledgeFiles(kbId.value);
   }
 };
 
@@ -1430,7 +1416,6 @@ const startMovePoll = (taskId: string) => {
       if (!data) return;
       if (data.status === 'completed') {
         stopMovePoll();
-        moveSubmitting.value = false;
         const failed = data.failed || 0;
         if (failed > 0) {
           MessagePlugin.warning(t('knowledgeBase.moveCompletedWithErrors', { success: (data.processed || 0) - failed, failed }));
@@ -1441,7 +1426,6 @@ const startMovePoll = (taskId: string) => {
         loadKnowledgeFiles(kbId.value);
       } else if (data.status === 'failed') {
         stopMovePoll();
-        moveSubmitting.value = false;
         MessagePlugin.error(t('knowledgeBase.moveFailed'));
       }
     } catch {
@@ -2244,7 +2228,7 @@ const handleCardAction = (
 
 // Bridge list-view actions back to existing per-card handlers.
 const handleListAction = (
-  action: 'edit' | 'reparse' | 'cancel-parse' | 'move' | 'delete' | 'view-trace' | 'batch-manage',
+  action: 'edit' | 'reparse' | 'cancel-parse' | 'move' | 'move-folder' | 'delete' | 'view-trace' | 'batch-manage', (feat(knowledge): move-to-folder + fix list-view move-to-KB)
   item: KnowledgeCard & { isFolder?: boolean },
 ) => {
   // Handle folder deletion
@@ -2259,6 +2243,7 @@ const handleListAction = (
   if (action === 'reparse') return confirmRebuildKnowledge(idx, item);
   if (action === 'cancel-parse') return confirmCancelParseKnowledge(item);
   if (action === 'move') return handleMoveKnowledge(item);
+  if (action === 'move-folder') return handleMoveToFolder(item);
   if (action === 'delete') return confirmDeleteKnowledge(idx, item);
   if (action === 'view-trace') return handleViewTrace(idx, item);
   if (action === 'batch-manage') return handleEnterBatchFromCard(item);
@@ -2691,7 +2676,7 @@ async function createNewSession(value: string): Promise<void> {
                   :reparse-loading="batchReparsing" :batch-tag-loading="batchTagLoading"
                   :visible="batchMode || selectedIds.size > 0"
                   @cancel="handleBatchCancel" @delete="confirmBatchDelete" @reparse="confirmBatchReparse"
-                  @batch-tag="openBatchTagDialog" />
+                  @batch-tag="openBatchTagDialog" @move-folder="handleBatchMoveToFolder" />
               </div>
             </div>
           </div>
@@ -2746,6 +2731,24 @@ async function createNewSession(value: string): Promise<void> {
     :folder="currentEditFolder"
     :parent-folder-id="currentFolderId"
     @success="handleFolderDialogSuccess"
+  />
+
+  <!-- Move knowledge to another KB (shared by grid + list views) -->
+  <MoveKnowledgeDialog
+    v-model:visible="moveKbDialogVisible"
+    :knowledge-ids="moveKbDialogIds"
+    :source-kb-id="kbId"
+    @moved="handleMoveKbDialogMoved"
+  />
+
+  <!-- Move knowledge to a folder within the current KB -->
+  <FolderSelector
+    v-model:visible="moveFolderDialogVisible"
+    :title="t('knowledgeBase.moveToFolder')"
+    :folder-tree="folderTree"
+    :tree-loading="treeLoading"
+    :current-folder-id="currentFolderId"
+    @confirm="handleMoveFolderConfirm"
   />
 </template>
 <style>
