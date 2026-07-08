@@ -805,3 +805,11 @@ func TestValidateFolderOwnership(t *testing.T) {
 	err = svc.ValidateFolderOwnership(ctx, 2, "kb-1", &folderID)
 	assert.ErrorIs(t, err, repository.ErrFolderNotFound)
 }
+
+// Note on concurrency testing:
+// A meaningful concurrent-MoveFolder test requires the real PostgreSQL
+// backend (SELECT ... FOR UPDATE serializes the two goroutines). The in-memory
+// fake repo uses an unsynchronized map, so a -race run reports a data race on
+// the repo itself — a harness artifact, not a production defect. Such a test
+// is therefore omitted here; the TOCTOU fix must be validated by a PG-backed
+// integration test, not a fake-repo unit test.
