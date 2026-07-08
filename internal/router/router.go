@@ -49,6 +49,7 @@ type RouterParams struct {
 	AgentShareService            interfaces.AgentShareService
 	KBHandler                    *handler.KnowledgeBaseHandler
 	KnowledgeHandler             *handler.KnowledgeHandler
+	KnowledgeFolderHandler       *handler.KnowledgeFolderHandler
 	TenantHandler                *handler.TenantHandler
 	TenantService                interfaces.TenantService
 	TenantAPIKeyService          interfaces.TenantAPIKeyService
@@ -218,6 +219,7 @@ func NewRouter(params RouterParams) *gin.Engine {
 		// /files route cannot serve because it enforces same-tenant paths.
 		serveKBScopedFiles(v1, rbacGuards, params.TenantService, params.FileService)
 		RegisterKnowledgeTagRoutes(v1, params.TagHandler, rbacGuards)
+		RegisterKnowledgeFolderRoutes(v1, params.KnowledgeFolderHandler, rbacGuards)
 		RegisterKnowledgeRoutes(v1, params.KnowledgeHandler, rbacGuards)
 		RegisterFAQRoutes(v1, params.FAQHandler, rbacGuards)
 		RegisterChunkRoutes(v1, params.ChunkHandler, rbacGuards)
@@ -352,6 +354,10 @@ func RegisterKnowledgeRoutes(r *gin.RouterGroup, handler *handler.KnowledgeHandl
 		kgrp.POST("/batch-reparse", g.Contributor(), handler.BatchReparseKnowledge)
 		kgrp.POST("/batch-delete", g.Contributor(), handler.BatchDeleteKnowledge)
 		kgrp.POST("/move", g.Contributor(), handler.MoveKnowledge)
+
+		// Folder operations for knowledge entries
+		kgrp.PUT("/:id/folder", g.OwnedKnowledgeKBOrAdmin(), g.KBAccessWriteFromKnowledgeIDParam("id"), handler.MoveKnowledgeToFolder)
+		kgrp.POST("/batch-move-folder", g.Contributor(), handler.BatchMoveKnowledgeToFolder)
 	}
 }
 
