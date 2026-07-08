@@ -38,7 +38,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue';
+import { ref, computed, inject, watch, type Ref } from 'vue';
 import { FolderIcon } from 'tdesign-icons-vue-next';
 import type { KnowledgeFolder } from '@/types/knowledgeFolder';
 
@@ -59,7 +59,17 @@ const emit = defineEmits<{
   (e: 'select', folderId: string): void;
 }>();
 
-const expanded = ref(false);
+// Shared expand-all state from FolderSelector (provide/inject). When the user
+// toggles "expand all", every node follows; manual chevron clicks still override
+// locally until the next global toggle.
+const expandAllState = inject<Ref<boolean>>('folder-selector-expand-all', ref(true));
+
+const expanded = ref(expandAllState.value);
+
+// Keep this node in sync with the global toggle.
+watch(expandAllState, (v) => {
+  expanded.value = v;
+});
 
 const hasChildren = computed(() => {
   return props.folder.children && props.folder.children.length > 0;

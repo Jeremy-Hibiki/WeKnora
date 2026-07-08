@@ -4,11 +4,16 @@
     :header="title"
     :on-confirm="handleConfirm"
     width="500px"
+    :zIndex="5500"
   >
     <div class="folder-selector">
       <div class="folder-selector-hint">
         <t-icon name="info-circle" />
         <span>选择目标文件夹，或选择"根目录"移动到顶层</span>
+        <t-link v-if="folderTree.length" theme="primary" hover="color" size="small" class="expand-toggle"
+          @click="expandAll = !expandAll">
+          {{ expandAll ? '全部收起' : '全部展开' }}
+        </t-link>
       </div>
 
       <div class="folder-tree-container">
@@ -49,7 +54,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue';
+import { ref, computed, watch, provide, inject, type Ref } from 'vue';
 import { HomeIcon } from 'tdesign-icons-vue-next';
 import type { KnowledgeFolder } from '@/types/knowledgeFolder';
 import FolderTreeNode from './FolderTreeNode.vue';
@@ -74,6 +79,12 @@ const emit = defineEmits<{
   (e: 'update:visible', value: boolean): void;
   (e: 'confirm', folderId: string | null): void;
 }>();
+
+// Global expand-all control shared with recursive FolderTreeNode via inject.
+// Nodes default to expanded when expandAll is true so multi-level folders are
+// visible without manual clicking.
+const expandAll = ref(true);
+provide('folder-selector-expand-all', expandAll);
 
 const selectedFolderId = ref<string | null>(null);
 
@@ -116,6 +127,11 @@ const handleConfirm = () => {
 
     .t-icon {
       color: var(--td-brand-color);
+    }
+
+    .expand-toggle {
+      margin-left: auto;
+      flex-shrink: 0;
     }
   }
 

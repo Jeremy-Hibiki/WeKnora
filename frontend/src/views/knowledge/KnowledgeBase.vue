@@ -1364,12 +1364,14 @@ const onReparseMenuClick = (index: number, item: KnowledgeCard) => {
 // list views because the target selection lives in a dialog, not an inline
 // submenu that only the grid popup renders.
 const handleMoveKnowledge = (item: KnowledgeCard) => {
+  item.isMore = false; // close the grid card popup so it doesn't sit behind the dialog
   moveKbDialogIds.value = [item.id];
   moveKbDialogVisible.value = true;
 };
 
 // Open the move-to-folder dialog for a single document.
 const handleMoveToFolder = (item: KnowledgeCard) => {
+  item.isMore = false;
   moveFolderKnowledgeIds.value = [item.id];
   moveFolderDialogVisible.value = true;
 };

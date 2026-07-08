@@ -5,6 +5,7 @@
     :footer="false"
     width="460px"
     placement="center"
+    :zIndex="5500"
     @closed="handleClosed"
   >
     <!-- Step 1: choose a target KB -->
