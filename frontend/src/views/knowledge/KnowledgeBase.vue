@@ -390,6 +390,12 @@ const moveFolderKnowledgeIds = ref<string[]>([]);
 // Move-folder-to-folder state
 const folderMoveDialogVisible = ref(false);
 const folderToMove = ref<KnowledgeFolder | null>(null);
+const pendingMoveFolders = ref<KnowledgeFolder[]>([]);
+// Disabled folder IDs for the move-folder dialog.
+const folderMoveDisabledIds = computed(() => {
+  if (folderToMove.value) return [folderToMove.value.id];
+  return pendingMoveFolders.value.map((f) => f.id);
+});
 let movePollTimer: ReturnType<typeof setInterval> | null = null;
 
 // View mode (grid / list) — persisted per browser
@@ -1383,31 +1389,86 @@ const handleMoveToFolder = (item: KnowledgeCard) => {
 const handleBatchMoveToFolder = () => {
   const ids = [...selectedIds.value];
   if (ids.length === 0) return;
-  // Filter out folders — the batch-move-folder API only handles knowledge entries.
-  const knowledgeIds = ids.filter((id) => {
-    const item = cardList.value.find((c) => c.id === id);
-    return item && !item.isFolder;
-  });
-  if (knowledgeIds.length === 0) {
-    MessagePlugin.warning(t('knowledgeBase.noKnowledgeSelected'));
+  // Separate folders and knowledge entries.
+  const foldersToMove: KnowledgeFolder[] = [];
+  const knowledgeIds: string[] = [];
+  for (const id of ids) {
+    const item = cardList.value.find((c: KnowledgeCard) => c.id === id);
+    if (item) {
+      if ((item as any).isFolder) {
+        foldersToMove.push(item as unknown as KnowledgeFolder);
+      } else {
+        knowledgeIds.push(id);
+      }
+    }
+  }
+  // If folders selected, open folder-to-folder move dialog.
+  if (foldersToMove.length > 0) {
+    if (foldersToMove.length === 1) {
+      // Single folder → move-to-folder dialog
+      folderToMove.value = foldersToMove[0];
+      loadFolderTree();
+      folderMoveDialogVisible.value = true;
+    } else {
+      // Multiple folders → open folder selector, then batch-move all to target.
+      pendingMoveFolders.value = foldersToMove;
+      loadFolderTree();
+      folderMoveDialogVisible.value = true;
+    }
     return;
   }
+  // All knowledge entries → move-to-folder dialog.
   moveFolderKnowledgeIds.value = knowledgeIds;
   moveFolderDialogVisible.value = true;
 };
 
-// Confirm move-to-folder: call the folder-move API and refresh.
+// Confirm move-to-folder: batch-move knowledge entries or folder(s).
 const handleMoveFolderConfirm = async (targetFolderId: string | null) => {
-  const ids = moveFolderKnowledgeIds.value;
-  if (ids.length === 0) return;
-  try {
-    await batchMoveKnowledgeToFolder({ knowledge_ids: ids, folder_id: targetFolderId });
-    MessagePlugin.success(t('knowledgeBase.moveToFolderSuccess'));
-    resetPage();
-    await loadKnowledgeFiles(kbId.value);
-  } catch (err) {
-    const message = (err as { message?: string })?.message || t('knowledgeBase.moveToFolderFailed');
-    MessagePlugin.error(message);
+  // Case 1: Knowledge entries (existing flow).
+  if (moveFolderKnowledgeIds.value.length > 0) {
+    const ids = moveFolderKnowledgeIds.value;
+    moveFolderKnowledgeIds.value = [];
+    try {
+      await batchMoveKnowledgeToFolder({ knowledge_ids: ids, folder_id: targetFolderId });
+      MessagePlugin.success(t('knowledgeBase.moveToFolderSuccess'));
+      resetPage();
+      await loadKnowledgeFiles(kbId.value);
+    } catch (err) {
+      const message = (err as { message?: string })?.message || t('knowledgeBase.moveToFolderFailed');
+      MessagePlugin.error(message);
+    }
+    return;
+  }
+  // Case 2: Single folder move.
+  if (folderToMove.value) {
+    const folder = folderToMove.value;
+    folderToMove.value = null;
+    try {
+      await moveFolder(kbId.value, folder.id, { target_parent_folder_id: targetFolderId });
+      MessagePlugin.success(t('knowledgeFolder.moveFolderSuccess'));
+      resetPage();
+      await loadKnowledgeFiles(kbId.value);
+    } catch (err) {
+      const message = (err as { message?: string })?.message || t('knowledgeFolder.moveFolderFailed');
+      MessagePlugin.error(message);
+    }
+    return;
+  }
+  // Case 3: Multiple folders → batch-move each one.
+  if (pendingMoveFolders.value.length > 0) {
+    const folders = pendingMoveFolders.value;
+    pendingMoveFolders.value = [];
+    try {
+      for (const folder of folders) {
+        await moveFolder(kbId.value, folder.id, { target_parent_folder_id: targetFolderId });
+      }
+      MessagePlugin.success(t('knowledgeFolder.moveFolderSuccess'));
+      resetPage();
+      await loadKnowledgeFiles(kbId.value);
+    } catch (err) {
+      const message = (err as { message?: string })?.message || t('knowledgeFolder.moveFolderFailed');
+      MessagePlugin.error(message);
+    }
   }
 };
 
@@ -1418,18 +1479,38 @@ const handleMoveFolder = (folder: KnowledgeFolder) => {
   folderMoveDialogVisible.value = true;
 };
 
-// Confirm move-folder: move the folder itself to another parent folder.
+// Confirm move-folder: move the folder itself or batch-move multiple folders.
 const handleConfirmFolderMove = async (targetFolderId: string | null) => {
-  if (!folderToMove.value) return;
-  try {
-    await moveFolder(kbId.value, folderToMove.value.id, { target_parent_folder_id: targetFolderId });
-    MessagePlugin.success(t('knowledgeFolder.moveFolderSuccess'));
+  if (folderToMove.value) {
+    // Single folder move.
+    const folder = folderToMove.value;
     folderToMove.value = null;
-    resetPage();
-    await loadKnowledgeFiles(kbId.value);
-  } catch (err) {
-    const message = (err as { message?: string })?.message || t('knowledgeFolder.moveFolderFailed');
-    MessagePlugin.error(message);
+    try {
+      await moveFolder(kbId.value, folder.id, { target_parent_folder_id: targetFolderId });
+      MessagePlugin.success(t('knowledgeFolder.moveFolderSuccess'));
+      resetPage();
+      await loadKnowledgeFiles(kbId.value);
+    } catch (err) {
+      const message = (err as { message?: string })?.message || t('knowledgeFolder.moveFolderFailed');
+      MessagePlugin.error(message);
+    }
+    return;
+  }
+  // Multiple folders batch move.
+  if (pendingMoveFolders.value.length > 0) {
+    const folders = pendingMoveFolders.value;
+    pendingMoveFolders.value = [];
+    try {
+      for (const folder of folders) {
+        await moveFolder(kbId.value, folder.id, { target_parent_folder_id: targetFolderId });
+      }
+      MessagePlugin.success(t('knowledgeFolder.moveFolderSuccess'));
+      resetPage();
+      await loadKnowledgeFiles(kbId.value);
+    } catch (err) {
+      const message = (err as { message?: string })?.message || t('knowledgeFolder.moveFolderFailed');
+      MessagePlugin.error(message);
+    }
   }
 };
 
@@ -2797,7 +2878,7 @@ async function createNewSession(value: string): Promise<void> {
     :folder-tree="folderTree"
     :tree-loading="treeLoading"
     :current-folder-id="folderToMove?.parent_folder_id || null"
-    :disabled-folder-ids="folderToMove ? [folderToMove.id] : []"
+    :disabled-folder-ids="folderMoveDisabledIds"
     @confirm="handleConfirmFolderMove"
   />
 </template>
