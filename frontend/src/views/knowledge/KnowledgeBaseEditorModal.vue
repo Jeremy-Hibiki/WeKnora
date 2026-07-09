@@ -1023,10 +1023,38 @@ const handleStorageProviderUpdate = (value: string) => {
   }
 }
 
+/**
+ * pickAllowedProvider resolves a storage provider the tenant actually permits,
+ * mirroring the disable logic in KBStorageSettings (engineOptions.disabled +
+ * ensureAllowedProvider). The raw storage-engine-config.default_provider may
+ * name an engine the allow-list excludes — e.g. 'local' when only minio is
+ * allowed. Without this filter the KB-create payload carries that rejected
+ * provider whenever the user never opens the lazy-mounted 'storage' section
+ * (KBStorageSettings only runs its own ensureAllowedProvider once mounted, and
+ * the section is gated behind v-if="currentSection === 'storage'").
+ */
+function pickAllowedProvider(preferred: string): string {
+  const engines = editorResources.storageStatus ?? []
+  const status = (name: string) => engines.find(e => e.name === name)
+  // Mirrors KBStorageSettings.engineOptions: selectable unless explicitly
+  // disallowed (allowed===false), and — for non-local backends — unless
+  // unavailable (available===false).
+  const selectable = (name: string): boolean => {
+    const e = status(name)
+    if (e?.allowed === false) return false
+    if (name !== 'local' && e?.available === false) return false
+    return true
+  }
+  if (preferred && selectable(preferred)) return preferred
+  const order = ['local', 'minio', 'cos', 'tos', 's3', 'oss', 'ks3', 'obs']
+  return order.find(selectable) || preferred || 'local'
+}
+
 async function loadTenantDefaultStorageProvider(force = false) {
   try {
     await editorResources.ensureStorageEngine(force)
-    tenantDefaultStorageProvider.value = editorResources.storageConfig?.default_provider || 'local'
+    const raw = editorResources.storageConfig?.default_provider || 'local'
+    tenantDefaultStorageProvider.value = pickAllowedProvider(raw)
   } catch {
     tenantDefaultStorageProvider.value = 'local'
   }
