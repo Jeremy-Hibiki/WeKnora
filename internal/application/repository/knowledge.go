@@ -146,7 +146,16 @@ func applyKnowledgeListFilter(query *gorm.DB, filter types.KnowledgeListFilter) 
 	if filter.FolderID == "__root__" {
 		query = query.Where("folder_id IS NULL")
 	} else if filter.FolderID != "" {
-		query = query.Where("folder_id = ?", filter.FolderID)
+		if filter.Recursive {
+			// Include the folder itself and all descendants by expanding the
+			// materialized path via a subquery (avoids a pre-fetch round-trip).
+			query = query.Where(
+				"folder_id IN (SELECT id FROM knowledge_folders WHERE path LIKE (SELECT path FROM knowledge_folders WHERE id = ?) || '%%')",
+				filter.FolderID,
+			)
+		} else {
+			query = query.Where("folder_id = ?", filter.FolderID)
+		}
 	}
 	return query
 }

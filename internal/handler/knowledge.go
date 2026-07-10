@@ -935,6 +935,13 @@ func (h *KnowledgeHandler) ListKnowledge(c *gin.Context) {
 		Source:      c.Query("source"),
 		FolderID:    c.Query("folder_id"),
 	}
+	// folder_scope: when provided, recursively list knowledge entries from
+	// the specified folder AND all its descendants. This powers the
+	// "search in this folder" toggle in the KB view.
+	if folderScope := c.Query("folder_scope"); folderScope != "" {
+		filter.FolderID = folderScope
+		filter.Recursive = true
+	}
 	if raw := c.Query("start_time"); raw != "" {
 		t, err := parseFilterTime(raw)
 		if err != nil {
