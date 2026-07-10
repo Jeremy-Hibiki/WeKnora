@@ -2204,6 +2204,9 @@ const toggleSelectRow = (id: string, checked: boolean, shiftKey?: boolean) => {
     else selectedIds.value.delete(id);
   }
   lastSelectedIndex = idx;
+  if (!checked && selectedIds.value.size === 0) {
+    batchMode.value = false;
+  }
 };
 
 const onCardGridCheckboxChange = (id: string, checked: boolean, ctx?: { e?: Event }) => {
@@ -2219,6 +2222,9 @@ const toggleSelectAll = (checked: boolean) => {
     } else {
       selectedIds.value.delete(item.id);
     }
+  }
+  if (!checked) {
+    batchMode.value = false;
   }
 };
 
