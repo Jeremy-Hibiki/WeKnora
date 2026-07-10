@@ -110,6 +110,10 @@ type KnowledgeListFilter struct {
 	// Recursive, when true alongside a non-empty FolderID, includes entries from
 	// all descendant subfolders.
 	Recursive bool
+	// folderIDs is an internal field set by the repository when Recursive is true;
+	// it holds the pre-resolved folder IDs (scope folder + all descendants).
+	// This avoids a non-constant LIKE subquery that can't use the path index.
+	FolderIDs []string
 }
 
 // Knowledge represents a knowledge entity in the system.

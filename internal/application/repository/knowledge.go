@@ -146,13 +146,9 @@ func applyKnowledgeListFilter(query *gorm.DB, filter types.KnowledgeListFilter) 
 	if filter.FolderID == "__root__" {
 		query = query.Where("folder_id IS NULL")
 	} else if filter.FolderID != "" {
-		if filter.Recursive {
-			// Include the folder itself and all descendants by expanding the
-			// materialized path via a subquery (avoids a pre-fetch round-trip).
-			query = query.Where(
-				"folder_id IN (SELECT id FROM knowledge_folders WHERE path LIKE (SELECT path FROM knowledge_folders WHERE id = ?) || '%%')",
-				filter.FolderID,
-			)
+		if len(filter.FolderIDs) > 0 {
+			// Recursive: caller pre-resolved descendant folder IDs.
+			query = query.Where("folder_id IN ?", filter.FolderIDs)
 		} else {
 			query = query.Where("folder_id = ?", filter.FolderID)
 		}
@@ -168,6 +164,20 @@ func (r *knowledgeRepository) ListPagedKnowledgeByKnowledgeBaseID(
 	page *types.Pagination,
 	filter types.KnowledgeListFilter,
 ) ([]*types.Knowledge, int64, error) {
+	// Pre-resolve recursive folder scope so the LIKE uses a constant prefix
+	// (index-friendly) instead of a non-constant subquery.
+	if filter.Recursive && filter.FolderID != "" && filter.FolderID != "__root__" {
+		var folder types.KnowledgeFolder
+		if err := r.db.WithContext(ctx).
+			Where("id = ? AND tenant_id = ?", filter.FolderID, tenantID).
+			First(&folder).Error; err == nil {
+			var ids []string
+			r.db.WithContext(ctx).Model(&types.KnowledgeFolder{}).
+				Where("path LIKE ?", folder.Path+"%").
+				Pluck("id", &ids)
+			filter.FolderIDs = ids
+		}
+	}
 	var knowledges []*types.Knowledge
 	var total int64
 
