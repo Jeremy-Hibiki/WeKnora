@@ -382,6 +382,28 @@ func TestCreateFolder_EmptyName(t *testing.T) {
 	assert.Contains(t, err.Error(), "folder name cannot be empty")
 }
 
+func TestCreateFolder_InvalidNameCharacters(t *testing.T) {
+	svc, _ := setupServiceTest(t)
+	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(1))
+
+	invalidNames := []string{"a/b", "b\\c", "x\x00y"}
+	for _, name := range invalidNames {
+		_, err := svc.CreateFolder(ctx, "kb-1", &types.CreateFolderRequest{Name: name})
+		assert.Error(t, err, "expected error for name %q", name)
+		assert.Contains(t, err.Error(), "must not contain")
+	}
+}
+
+func TestCreateFolder_NameTooLong(t *testing.T) {
+	svc, _ := setupServiceTest(t)
+	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(1))
+
+	longName := strings.Repeat("a", 256)
+	_, err := svc.CreateFolder(ctx, "kb-1", &types.CreateFolderRequest{Name: longName})
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "255")
+}
+
 // --- GetFolder ---
 
 func TestGetFolder_Success(t *testing.T) {

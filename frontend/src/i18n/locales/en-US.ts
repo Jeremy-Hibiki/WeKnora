@@ -657,6 +657,8 @@ export default {
     dragFileNotText: 'Please drag files instead of text or links',
     searchPlaceholder: 'Search knowledge bases...',
     docSearchPlaceholder: 'Search document names...',
+    searchInFolder: 'Search in this folder',
+    folderPath: 'Folder',
     fileTypeFilter: 'File Type',
     allFileTypes: 'All Types',
     allTags: 'All Tags',

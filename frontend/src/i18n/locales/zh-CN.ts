@@ -661,6 +661,8 @@ export default {
     dragFileNotText: "请拖拽文件而不是文本或链接",
     searchPlaceholder: "搜索知识库...",
     docSearchPlaceholder: "搜索文档名称...",
+    searchInFolder: "在此文件夹中搜索",
+    folderPath: "文件夹",
     fileTypeFilter: "文件类型",
     allFileTypes: "全部类型",
     allTags: "全部标签",

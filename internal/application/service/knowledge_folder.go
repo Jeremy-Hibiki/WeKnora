@@ -46,6 +46,12 @@ func (s *knowledgeFolderService) CreateFolder(
 	if name == "" {
 		return nil, errors.New("folder name cannot be empty")
 	}
+	if strings.ContainsAny(name, "/\\\x00") {
+		return nil, errors.New("folder name must not contain '/', '\\', or null bytes")
+	}
+	if len(name) > 255 {
+		return nil, errors.New("folder name must not exceed 255 characters")
+	}
 
 	// Check name uniqueness under the same parent
 	exists, err := s.repo.CheckNameExists(ctx, tenantID, kbID, req.ParentFolderID, name, "")
@@ -216,6 +222,12 @@ func (s *knowledgeFolderService) UpdateFolder(
 	if req.Name != nil && *req.Name != "" {
 		name := strings.TrimSpace(*req.Name)
 		if name != folder.Name {
+			if strings.ContainsAny(name, "/\\\x00") {
+				return nil, errors.New("folder name must not contain '/', '\\', or null bytes")
+			}
+			if len(name) > 255 {
+				return nil, errors.New("folder name must not exceed 255 characters")
+			}
 			// Check uniqueness
 			exists, err := s.repo.CheckNameExists(ctx, tenantID, folder.KnowledgeBaseID,
 				folder.ParentFolderID, name, folder.ID)

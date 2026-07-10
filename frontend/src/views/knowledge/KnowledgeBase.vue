@@ -519,6 +519,10 @@ const tagTotal = ref(0);
 let tagSearchDebounce: number | null = null;
 let docSearchDebounce: number | null = null;
 const docSearchKeyword = ref('');
+// When true, the document keyword search is scoped to the current folder
+// (sends folder_scope = currentFolderId). Only meaningful while browsing
+// inside a folder; auto-resets when the user navigates away.
+const searchInFolder = ref(false);
 const selectedFileType = ref('');
 const fileTypeOptions = computed(() => [
   { label: t('knowledgeBase.allFileTypes'), value: '' },
@@ -599,7 +603,12 @@ watch([kbId, currentFolderId], ([newKbId, newFolderId]) => {
 }, { immediate: true });
 
 // Reload files when folder changes
-watch(currentFolderId, () => {
+watch(currentFolderId, (newFolderId) => {
+  // 'Search in this folder' only applies while browsing inside a folder;
+  // reset it when leaving to root so folder_scope is omitted (null) again.
+  if (!newFolderId) {
+    searchInFolder.value = false;
+  }
   resetPage();
   loadKnowledgeFiles(kbId.value);
 });
@@ -663,6 +672,7 @@ const displayCardList = computed(() => {
 
 const filterParams = computed(() => {
   const [start, end] = updatedTimeRange.value || [];
+  const inFolder = currentFolderId.value;
   return {
     tag_ids: selectedTagIds.value.length > 0 ? selectedTagIds.value.join(',') : undefined,
     keyword: docSearchKeyword.value ? docSearchKeyword.value.trim() : undefined,
@@ -671,7 +681,11 @@ const filterParams = computed(() => {
     source: selectedSource.value || undefined,
     start_time: start ? `${start} 00:00:00` : undefined,
     end_time: end ? `${end} 23:59:59` : undefined,
-    folder_id: currentFolderId.value || '__root__',
+    folder_id: inFolder || '__root__',
+    // folder_scope is only sent when the user opts in to searching within the
+    // current folder; the backend then restricts keyword/vector recall to
+    // this folder (and its descendants) instead of the whole KB.
+    folder_scope: searchInFolder.value && inFolder ? inFolder : undefined,
   };
 });
 const tagMap = computed<Record<string, any>>(() => {
@@ -2574,6 +2588,12 @@ async function createNewSession(value: string): Promise<void> {
                     <t-icon name="search" size="16px" />
                   </template>
                 </t-input>
+                <t-checkbox v-if="currentFolderId" v-model="searchInFolder" class="doc-search-in-folder"
+                  :title="$t('knowledgeBase.searchInFolder')"
+                  @change="() => { resetPage(); loadKnowledgeFiles(kbId); }">
+                  <t-icon name="folder" size="14px" style="vertical-align: -2px; margin-right: 2px;" />
+                  {{ $t('knowledgeBase.searchInFolder') }}
+                </t-checkbox>
                 <div class="doc-filter-bar__filters">
                 <t-popup v-model:visible="tagFilterPanelVisible" trigger="click" placement="bottom-left"
                   overlay-class-name="tag-filter-popup" :overlay-inner-style="{ padding: 0 }">
@@ -3371,6 +3391,14 @@ async function createNewSession(value: string): Promise<void> {
       flex: 1 1 220px;
       min-width: 220px;
     }
+  }
+
+  .doc-search-in-folder {
+    flex-shrink: 0;
+    font-size: 13px;
+    color: var(--td-text-color-secondary);
+    white-space: nowrap;
+    user-select: none;
   }
 
   .doc-type-select {
@@ -4466,6 +4494,27 @@ async function createNewSession(value: string): Promise<void> {
     text-overflow: ellipsis;
     white-space: nowrap;
     max-width: 100%;
+  }
+
+  .card-popover-folder {
+    font-size: 11px;
+    color: var(--td-text-color-secondary);
+    margin-bottom: 6px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    overflow: hidden;
+    white-space: nowrap;
+
+    .card-popover-folder-label {
+      flex-shrink: 0;
+    }
+
+    .card-popover-folder-path {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
   }
 
   .card-popover-extra {

@@ -153,6 +153,11 @@ type SearchResult struct {
 
 	// KnowledgeBaseID is the ID of the knowledge base this result belongs to
 	KnowledgeBaseID string `json:"knowledge_base_id,omitempty"`
+
+	// FolderID is the folder this knowledge entry belongs to (nil/empty = root)
+	FolderID *string `json:"folder_id,omitempty"`
+	// FolderPath is the human-readable path of the folder (e.g. /Guides/Go/API)
+	FolderPath string `json:"folder_path,omitempty"`
 }
 
 // SearchParams represents the search parameters
