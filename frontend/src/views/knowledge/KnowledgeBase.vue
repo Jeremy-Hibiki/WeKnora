@@ -2731,6 +2731,21 @@ async function createNewSession(value: string): Promise<void> {
                   </t-date-range-picker>
                 </div>
                 </div>
+                <div class="doc-filter-bar__trailing">
+                  <div class="doc-view-toggle" role="group" :aria-label="$t('knowledgeBase.viewModeToggle')">
+                    <t-tooltip :content="$t('knowledgeBase.viewModeGrid')" placement="top">
+                      <button type="button" class="doc-view-toggle-btn" :class="{ active: viewMode === 'grid' }"
+                        @click="viewMode = 'grid'" :aria-pressed="viewMode === 'grid'">
+                        <t-icon name="view-module" size="16px" />
+                      </button>
+                    </t-tooltip>
+                    <t-tooltip :content="$t('knowledgeBase.viewModeList')" placement="top">
+                      <button type="button" class="doc-view-toggle-btn" :class="{ active: viewMode === 'list' }"
+                        @click="viewMode = 'list'" :aria-pressed="viewMode === 'list'">
+                        <t-icon name="view-list" size="16px" />
+                      </button>
+                    </t-tooltip>
+                  </div>
                 <IconButtonGroup v-if="canEdit" style="margin-left: auto">
                   <KbUploadSourceDropdown ref="uploadSourceRef" :accept-file-types="acceptFileTypes"
                     :supported-file-types="[...supportedFileTypes]" include-manual trigger-icon="file-add"
