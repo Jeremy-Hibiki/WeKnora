@@ -241,10 +241,10 @@ const handleAction = (action: 'edit' | 'reparse' | 'cancel-parse' | 'move' | 'mo
 
     <div class="doc-list-body">
       <div v-for="item in items" :key="item.id" class="doc-list-row"
-        :class="{ selected: selectedIds.has(item.id), 'menu-open': moreOpen === item.id, 'is-folder': item.isFolder }" :data-select-id="item.id"
+        :class="{ selected: !item.isFolder && selectedIds.has(item.id), 'menu-open': moreOpen === item.id, 'is-folder': item.isFolder }" :data-select-id="item.isFolder ? undefined : item.id"
         role="row" @click="item.isFolder ? emit('enter-folder', item.id) : emit('open', item)">
         <div class="cell cell-check" @click.stop>
-          <t-checkbox class="doc-list-check" size="small" :checked="selectedIds.has(item.id)" :title="item.file_name"
+          <t-checkbox v-if="!item.isFolder" class="doc-list-check" size="small" :checked="selectedIds.has(item.id)" :title="item.file_name"
             @change="(c: boolean, ctx?: { e?: Event }) => onRowCheckboxChange(item, c, ctx)" />
         </div>
 

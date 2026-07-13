@@ -2215,8 +2215,8 @@ const onCardGridCheckboxChange = (id: string, checked: boolean, ctx?: { e?: Even
 };
 
 const toggleSelectAll = (checked: boolean) => {
-  // displayCardList includes both folderCardItems and cardList (files)
-  for (const item of displayCardList.value) {
+  // Only select documents, not folders
+  for (const item of cardList.value) {
     if (checked) {
       selectedIds.value.add(item.id);
     } else {
@@ -2787,9 +2787,8 @@ async function createNewSession(value: string): Promise<void> {
                         <div class="card-content-nav">
                           <t-icon name="folder" size="20px" class="folder-card-icon" />
                           <span class="card-content-title" :title="f.file_name">{{ f.file_name }}</span>
-                          <t-popup v-if="canEdit" trigger="click" placement="bottom-right" destroy-on-close
-                            @click.stop>
-                            <button type="button" class="folder-card-more">
+                          <t-popup v-if="canEdit" trigger="click" placement="bottom-right" destroy-on-close>
+                            <button type="button" class="folder-card-more" @click.stop>
                               <t-icon name="more" size="16px" />
                             </button>
                             <template #content>
