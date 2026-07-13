@@ -261,7 +261,10 @@ const handleAction = (action: 'edit' | 'reparse' | 'cancel-parse' | 'move' | 'de
 
 
         <div class="cell cell-tag">
-          <template v-if="item.tags && item.tags.length > 0">
+          <template v-if="item.isFolder">
+            <span class="row-muted">--</span>
+          </template>
+          <template v-else-if="item.tags && item.tags.length > 0">
             <t-tooltip v-if="hasTagOverflow(item.id, (item.tags || []).length)"
               :content="(item.tags || []).map((t: any) => t.name).join(', ')" placement="top">
               <div class="row-tag-chips" :ref="(el: any) => setupTagChipsObserver(el, item.id, (item.tags || []).length)"
