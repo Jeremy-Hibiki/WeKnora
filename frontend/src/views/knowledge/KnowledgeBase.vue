@@ -2778,8 +2778,8 @@ async function createNewSession(value: string): Promise<void> {
                   </div>
                 </div>
                 <template v-else-if="displayCardList.length && viewMode === 'grid'">
-                  <!-- Folder cards -->
-                  <div v-if="folderCardItems.length" class="doc-card-list doc-card-list-animated">
+                  <div class="doc-grid-unified">
+                    <!-- 文件夹卡片 -->
                     <div v-for="f in folderCardItems" :key="f.id"
                       class="knowledge-card knowledge-card--folder"
                       @click="handleFolderNavigate(f.id)">
@@ -3970,6 +3970,18 @@ async function createNewSession(value: string): Promise<void> {
   }
 }
 
+// Wrapper that contains folder cards + DocumentCardView in one flex flow
+.doc-grid-unified {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 12px;
+  width: 100%;
+  align-content: flex-start;
+  &:empty {
+    display: none;
+  }
+}
+
 .doc-card-list {
   box-sizing: border-box;
   display: grid;
@@ -3979,10 +3991,17 @@ async function createNewSession(value: string): Promise<void> {
   align-content: flex-start;
   width: 100%;
 
+  // When the folder-card-list wrapper is empty (no folders), collapse
+  // so it doesn't add extra gap in the parent flex.
+  &:empty {
+    display: none;
+  }
+
   &.doc-card-list-animated {
     animation: contentFadeIn 0.32s ease-out;
   }
 }
+
 
 .knowledge-card-skeleton {
   cursor: default;
