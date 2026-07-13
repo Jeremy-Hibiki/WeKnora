@@ -2787,16 +2787,30 @@ async function createNewSession(value: string): Promise<void> {
                         <div class="card-content-nav">
                           <t-icon name="folder" size="20px" class="folder-card-icon" />
                           <span class="card-content-title" :title="f.file_name">{{ f.file_name }}</span>
-                          <t-tooltip :content="$t('knowledgeFolder.moveFolder')" placement="top">
-                            <button type="button" class="folder-card-delete" @click.stop="handleMoveFolder(f)">
-                              <t-icon name="folder-import" size="14px" />
+                          <t-popup v-if="canEdit" trigger="click" placement="bottom-right" destroy-on-close
+                            @click.stop>
+                            <button type="button" class="folder-card-more">
+                              <t-icon name="more" size="16px" />
                             </button>
-                          </t-tooltip>
-                          <t-tooltip :content="$t('knowledgeFolder.deleteFolder')" placement="top">
-                            <button type="button" class="folder-card-delete" @click.stop="confirmDeleteFolder(f)">
-                              <t-icon name="delete" size="14px" />
-                            </button>
-                          </t-tooltip>
+                            <template #content>
+                              <div class="folder-card-menu">
+                                <div class="folder-card-menu-item" @click.stop="handleMoveFolder(f)">
+                                  <t-icon name="folder-import" size="16px" />
+                                  <span>{{ $t('knowledgeFolder.moveFolder') }}</span>
+                                </div>
+                                <t-popconfirm theme="warning"
+                                  :content="$t('knowledgeFolder.confirmDeleteFolder', { name: f.file_name || '' })"
+                                  :confirm-btn="{ content: $t('common.confirm'), theme: 'danger' }"
+                                  :cancel-btn="{ content: $t('common.cancel') }" placement="left"
+                                  @confirm="confirmDeleteFolder(f)">
+                                  <div class="folder-card-menu-item danger">
+                                    <t-icon name="delete" size="16px" />
+                                    <span>{{ $t('knowledgeFolder.deleteFolder') }}</span>
+                                  </div>
+                                </t-popconfirm>
+                              </div>
+                            </template>
+                          </t-popup>
                         </div>
                       </div>
                       <div class="card-bottom">
@@ -4763,17 +4777,14 @@ async function createNewSession(value: string): Promise<void> {
 /* ---- Folder card in grid ---- */
 .knowledge-card--folder {
   cursor: pointer;
-
   .card-content-nav {
     gap: 6px;
   }
-
   .folder-card-icon {
     color: var(--td-warning-color);
     flex-shrink: 0;
   }
-
-  .folder-card-action {
+  .folder-card-more {
     display: flex;
     align-items: center;
     justify-content: center;
@@ -4787,28 +4798,46 @@ async function createNewSession(value: string): Promise<void> {
     opacity: 0;
     transition: opacity 0.12s, color 0.12s;
     flex-shrink: 0;
-
+    margin-left: auto;
     &:hover {
       color: var(--td-brand-color);
       background: var(--td-brand-color-light);
     }
-
-    &.folder-card-delete {
-      margin-left: auto;
-
-      &:hover {
-        color: var(--td-error-color);
-        background: var(--td-error-color-1);
-      }
-    }
   }
-
-  &:hover .folder-card-action {
+  &:hover .folder-card-more {
     opacity: 1;
   }
-
   &:hover {
     border-color: var(--td-warning-color);
+  }
+}
+
+/* Folder card ⋯ menu */
+.folder-card-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px;
+  min-width: 160px;
+}
+.folder-card-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 4px;
+  font-size: 13px;
+  cursor: pointer;
+  color: var(--td-text-color-primary);
+  transition: background 0.12s;
+  &:hover {
+    background: var(--td-bg-color-container-hover);
+  }
+  &.danger {
+    color: var(--td-error-color);
+    &:hover {
+      background: var(--td-error-color-1);
+    }
   }
 }
 </style>
