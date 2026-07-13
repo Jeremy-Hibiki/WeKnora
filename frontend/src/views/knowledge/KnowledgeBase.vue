@@ -2753,6 +2753,7 @@ async function createNewSession(value: string): Promise<void> {
                     :tooltip="t('knowledgeBase.addDocument')" placement="bottom-right" @files="handleUploadSourceFiles"
                     @url="handleUploadSourceUrl" @manual="handleManualCreate" />
                 </IconButtonGroup>
+                </div>
               </div>
               <div class="doc-scroll-container"
                 :class="{ 'is-empty': !displayCardList.length && !docListLoading, 'is-marquee-active': docMarqueeVisible }"
