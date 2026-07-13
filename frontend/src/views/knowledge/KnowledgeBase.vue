@@ -2786,6 +2786,11 @@ async function createNewSession(value: string): Promise<void> {
                         <div class="card-content-nav">
                           <t-icon name="folder" size="20px" class="folder-card-icon" />
                           <span class="card-content-title" :title="f.file_name">{{ f.file_name }}</span>
+                          <t-tooltip :content="$t('knowledgeFolder.moveFolder')" placement="top">
+                            <button type="button" class="folder-card-delete" @click.stop="handleMoveFolder(f)">
+                              <t-icon name="folder-import" size="14px" />
+                            </button>
+                          </t-tooltip>
                           <t-tooltip :content="$t('knowledgeFolder.deleteFolder')" placement="top">
                             <button type="button" class="folder-card-delete" @click.stop="confirmDeleteFolder(f)">
                               <t-icon name="delete" size="14px" />
