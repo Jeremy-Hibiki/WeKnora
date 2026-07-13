@@ -2778,7 +2778,7 @@ async function createNewSession(value: string): Promise<void> {
                   </div>
                 </div>
                 <template v-else-if="displayCardList.length && viewMode === 'grid'">
-                  <div class="doc-grid-unified">
+                  <div class="doc-card-list doc-card-list-animated">
                     <!-- 文件夹卡片 -->
                     <div v-for="f in folderCardItems" :key="f.id"
                       class="knowledge-card knowledge-card--folder"
@@ -2804,8 +2804,9 @@ async function createNewSession(value: string): Promise<void> {
                         <span class="card-bottom-time">{{ new Date(f.created_at).toLocaleDateString() }}</span>
                       </div>
                     </div>
-                  </div>
-                  <DocumentCardView
+                    <!-- 文档卡片 -->
+                    <DocumentCardView
+                      inline
                     :items="cardList"
                     :selected-ids="selectedIds"
                     :batch-mode="batchMode"
@@ -2829,6 +2830,7 @@ async function createNewSession(value: string): Promise<void> {
                     @move-confirm="handleMoveConfirm"
                     @update:move-mode="(mode: any) => moveMode = mode"
                   />
+                  </div>
                 </template>
                 <template v-else-if="displayCardList.length && viewMode === 'list'">
                   <DocumentListView :items="displayCardList" :selected-ids="selectedIds" :tag-list="tagList"
@@ -3967,18 +3969,6 @@ async function createNewSession(value: string): Promise<void> {
   to {
     opacity: 1;
     transform: translateY(0);
-  }
-}
-
-// Wrapper that contains folder cards + DocumentCardView in one flex flow
-.doc-grid-unified {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-  gap: 12px;
-  width: 100%;
-  align-content: flex-start;
-  &:empty {
-    display: none;
   }
 }
 

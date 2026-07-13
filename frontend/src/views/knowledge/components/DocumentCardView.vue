@@ -50,6 +50,10 @@ const props = defineProps<{
   moveSelectedTargetName: string;
   moveMode: 'reuse_vectors' | 'reparse';
   moveSubmitting: boolean;
+  // When true, render card items without the outer .doc-card-list grid
+  // wrapper so they can participate in a parent grid (e.g. alongside
+  // folder cards rendered inline in KnowledgeBase.vue).
+  inline?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -261,7 +265,7 @@ const handleAction = (action: 'edit' | 'view-trace' | 'reparse' | 'cancel-parse'
 </script>
 
 <template>
-  <div class="doc-card-list doc-card-list-animated">
+  <div class="doc-card-list doc-card-list-animated" :class="{ 'doc-card-list--inline': inline }">
     <div
       class="knowledge-card"
       :class="{ 'is-selected': selectedIds.has(item.id), 'batch-mode': batchMode }"
@@ -608,6 +612,12 @@ const handleAction = (action: 'edit' | 'view-trace' | 'reparse' | 'cancel-parse'
 
   &.doc-card-list-animated {
     animation: contentFadeIn 0.32s ease-out;
+  }
+
+  // When inline, dissolve the wrapper so card children participate
+  // directly in the parent grid (folder + document cards mixed together).
+  &.doc-card-list--inline {
+    display: contents;
   }
 }
 
