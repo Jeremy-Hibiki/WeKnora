@@ -2761,7 +2761,29 @@ async function createNewSession(value: string): Promise<void> {
                     </div>
                   </div>
                 </div>
-                <template v-else-if="cardList.length && viewMode === 'grid'">
+                <template v-else-if="displayCardList.length && viewMode === 'grid'">
+                  <!-- Folder cards -->
+                  <div v-if="folderCardItems.length" class="doc-card-list doc-card-list-animated">
+                    <div v-for="f in folderCardItems" :key="f.id"
+                      class="knowledge-card knowledge-card--folder"
+                      @click="handleFolderNavigate(f.id)">
+                      <div class="card-content">
+                        <div class="card-content-nav">
+                          <t-icon name="folder" size="20px" class="folder-card-icon" />
+                          <span class="card-content-title" :title="f.file_name">{{ f.file_name }}</span>
+                          <t-tooltip :content="$t('knowledgeFolder.deleteFolder')" placement="top">
+                            <button type="button" class="folder-card-delete" @click.stop="confirmDeleteFolder(f)">
+                              <t-icon name="delete" size="14px" />
+                            </button>
+                          </t-tooltip>
+                        </div>
+                      </div>
+                      <div class="card-bottom">
+                        <span class="card-bottom-tag">{{ $t('knowledgeFolder.itemCount', { count: f.knowledge_count || 0 }) }}</span>
+                        <span class="card-bottom-time">{{ formatDocTime(f.created_at) }}</span>
+                      </div>
+                    </div>
+                  </div>
                   <DocumentCardView
                     :items="cardList"
                     :selected-ids="selectedIds"
@@ -2787,8 +2809,8 @@ async function createNewSession(value: string): Promise<void> {
                     @update:move-mode="(mode: any) => moveMode = mode"
                   />
                 </template>
-                <template v-else-if="cardList.length && viewMode === 'list'">
-                  <DocumentListView :items="cardList" :selected-ids="selectedIds" :tag-list="tagList"
+                <template v-else-if="displayCardList.length && viewMode === 'list'">
+                  <DocumentListView :items="displayCardList" :selected-ids="selectedIds" :tag-list="tagList"
                     :can-edit="canEdit" :can-mutate-knowledge="canMutateKnowledge"
                     :trace-visible-ids="traceAvailableById"
                     :move-menu-mode="moveMenuMode"
