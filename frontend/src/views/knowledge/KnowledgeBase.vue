@@ -2780,7 +2780,7 @@ async function createNewSession(value: string): Promise<void> {
                       </div>
                       <div class="card-bottom">
                         <span class="card-bottom-tag">{{ $t('knowledgeFolder.itemCount', { count: f.knowledge_count || 0 }) }}</span>
-                        <span class="card-bottom-time">{{ formatDocTime(f.created_at) }}</span>
+                        <span class="card-bottom-time">{{ new Date(f.created_at).toLocaleDateString() }}</span>
                       </div>
                     </div>
                   </div>
