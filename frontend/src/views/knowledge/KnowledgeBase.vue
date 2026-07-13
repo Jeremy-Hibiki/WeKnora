@@ -2562,7 +2562,7 @@ async function createNewSession(value: string): Promise<void> {
 
       <template v-if="activeKbTab === 'documents' || !isWiki">
         <!-- Folder breadcrumb: always rendered (v-show) to avoid layout jitter -->
-        <div v-show="breadcrumbPath.length > 0 && !isFAQ" class="folder-breadcrumb-bar">
+        <div v-show="!isFAQ" class="folder-breadcrumb-bar">
           <t-icon name="folder-open" class="folder-breadcrumb-icon" />
           <button type="button" class="folder-breadcrumb-link" @click="handleFolderNavigate(null)">
             {{ $t('knowledgeFolder.rootFolder') }}
