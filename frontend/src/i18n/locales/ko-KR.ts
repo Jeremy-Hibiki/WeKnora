@@ -692,6 +692,10 @@ export default {
     allUploadFailed: "모든 파일 업로드 실패 ({count}개)",
     deleteSuccess: "지식이 성공적으로 삭제되었습니다!",
     chunkLoadFailed: "청크 로드 실패",
+    loading: "로딩 중...",
+    selectKnowledgeBase: "지식 베이스를 선택하세요",
+    createSessionFailed: "세션 생성 실패",
+    createSessionError: "세션 생성 오류",
   },
   uploadConfirm: {
     title: "문서 업로드 확인",
@@ -1235,6 +1239,7 @@ export default {
       paddleocrVlEndpointPlaceholder: '예: http://your-paddleocr-vl:8080',
       paddleocrVlEndpointHint: 'PaddleOCR-VL 전체 서비스(pipeline) 주소를 입력하세요. /layout-parsing 접미사는 불필요합니다',
       paddleocrVlCloudTokenPlaceholder: 'PaddleOCR-VL AI Studio Token',
+      checking: "확인 중...",
     },
     storage: {
       title: '스토리지 엔진',
@@ -1903,6 +1908,12 @@ export default {
     retry: "재시도",
     expand: "펼치기",
     collapse: "접기",
+    avatar: "아바타",
+    copySuccess: "복사됨",
+    createSuccess: "생성됨",
+    updateSuccess: "수정됨",
+    operationFailed: "작업이 실패했습니다",
+    loadMore: "더 불러오기",
   },
   mentionDetail: {
     faqCount: "Q&A {count}개",
@@ -2244,6 +2255,7 @@ export default {
     unsupportedFormat: "지원되지 않는 파일 형식",
     maxSizeExceeded: "파일 크기가 제한을 초과했습니다",
     selectFile: "파일 선택",
+    downloadFailed: "다운로드 실패",
   },
   tenant: {
     title: "테넌트 정보",
@@ -2882,6 +2894,10 @@ export default {
       updateApiPrincipalConfigFailed: 'API principal config 업데이트 실패',
       createApiPrincipalTestTokenFailed: 'API 테스트 토큰 생성 실패',
       updateFailed: '테넌트 정보 업데이트 실패',
+      createFailed: "워크스페이스 생성 실패",
+      createApiKeyFailed: "API 키 생성 실패",
+      deleteApiKeyFailed: "API 키 삭제 실패",
+      listApiKeysFailed: "API 키 목록 조회 실패",
     },
     initialization: {
       checkFailed: '검사 실패',
@@ -3944,6 +3960,7 @@ export default {
       batchDisable: "일괄 비활성화",
       batchEnableRecommended: "일괄 추천 활성화",
       batchDisableRecommended: "일괄 추천 비활성화",
+      selectEntriesFirst: "먼저 FAQ 항목을 선택하세요",
     },
     faqImport: {
       title: "FAQ 일괄 가져오기",
@@ -6019,6 +6036,7 @@ export default {
     syncResultCreated: "+{n}",
     syncResultUpdated: "~{n}",
     syncResultDeleted: "-{n}",
+    resumeFailed: "재개 실패",
   },
   integrations: {
     title: "게시 및 통합",
@@ -6619,5 +6637,10 @@ export default {
     maxDepthExceeded: "최대 깊이 제한에 도달했습니다",
     uploadTargetHint: "파일이 업로드될 위치: {path}",
     fileAndFolderCount: "폴더 {folders}개, 파일 {files}개",
+    moveFolderFailed: "폴더 이동 실패",
+    moveFolderSuccess: "폴더가 이동되었습니다",
+  },
+  knowledge: {
+    untitledDocument: "제목 없는 문서",
   },
 };

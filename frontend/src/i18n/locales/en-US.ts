@@ -590,9 +590,6 @@ export default {
     confirmDeleteDocument: 'Confirm deletion of document "{fileName}", recovery will be impossible after deletion',
     cancel: 'Cancel',
     confirmDelete: 'Confirm Delete',
-    viewModeGrid: 'Grid view',
-    viewModeList: 'List view',
-    viewModeToggle: 'Toggle view',
     columnName: 'Name',
     columnTag: 'Tag',
     columnSize: 'Size',
@@ -693,6 +690,10 @@ export default {
     allUploadFailed: 'All files failed to upload ({count} files)',
     deleteSuccess: 'Knowledge deleted successfully!',
     chunkLoadFailed: 'Failed to load chunks',
+    loading: 'Loading...',
+    selectKnowledgeBase: 'Please select a knowledge base',
+    createSessionFailed: 'Failed to create session',
+    createSessionError: 'Session creation error',
   },
 
   uploadConfirm: {
@@ -1386,6 +1387,7 @@ export default {
       paddleocrVlEndpointPlaceholder: 'e.g. http://your-paddleocr-vl:8080',
       paddleocrVlEndpointHint: 'Base URL of the full PaddleOCR-VL pipeline service; no /layout-parsing suffix needed',
       paddleocrVlCloudTokenPlaceholder: 'PaddleOCR-VL AI Studio Token',
+      checking: 'Checking...',
     },
     storage: {
       title: 'Storage Engine',
@@ -2056,12 +2058,17 @@ export default {
     knowledgeBase: 'Knowledge Base',
     folder: 'Folder',
     noResult: 'No results',
-    remove: 'Remove',
     defaultUser: 'User',
     copyFailed: 'Copy failed',
     retry: 'Retry',
     expand: 'Expand',
     collapse: 'Collapse',
+    avatar: 'Avatar',
+    copySuccess: 'Copy successful',
+    createSuccess: 'Created successfully',
+    updateSuccess: 'Updated successfully',
+    operationFailed: 'Operation failed',
+    loadMore: 'Load more',
   },
   mentionDetail: {
     readOnlyFromAgent: 'Read-only in this conversation; not shown in Knowledge Base list',
@@ -2082,7 +2089,8 @@ export default {
     preview: 'Preview',
     unsupportedFormat: 'Unsupported file format',
     maxSizeExceeded: 'Maximum file size exceeded',
-    selectFile: 'Select File'
+    selectFile: 'Select File',
+    downloadFailed: 'Download failed',
   },
   manualEditor: {
     placeholders: {
@@ -2855,6 +2863,7 @@ export default {
       batchDisable: 'Batch Disable',
       batchEnableRecommended: 'Batch Enable Recommendation',
       batchDisableRecommended: 'Batch Disable Recommendation',
+      selectEntriesFirst: 'Please select FAQ entries first',
     },
     faqImport: {
       title: 'Batch Import FAQ',
@@ -3908,6 +3917,10 @@ export default {
       createApiPrincipalTestTokenFailed: 'Failed to create API test token',
       updateFailed: 'Failed to update tenant information',
       deleteFailed: 'Failed to delete tenant',
+      createFailed: 'Failed to create workspace',
+      createApiKeyFailed: 'Failed to create API key',
+      deleteApiKeyFailed: 'Failed to delete API key',
+      listApiKeysFailed: 'Failed to list API keys',
     },
     initialization: {
       checkFailed: 'Check failed',
@@ -6017,6 +6030,7 @@ export default {
     syncResultUpdated: '~{n}',
     syncResultDeleted: '-{n}',
     moreActions: 'More',
+    resumeFailed: 'Failed to resume',
   },
   integrations: {
     title: 'Publish & Integrations',
@@ -6646,5 +6660,10 @@ export default {
     maxDepthExceeded: 'Maximum depth limit reached',
     uploadTargetHint: 'Files will be uploaded to: {path}',
     fileAndFolderCount: '{folders} folders, {files} files',
+    moveFolderFailed: 'Failed to move folder',
+    moveFolderSuccess: 'Folder moved successfully',
+  },
+  knowledge: {
+    untitledDocument: 'Untitled document',
   },
 }

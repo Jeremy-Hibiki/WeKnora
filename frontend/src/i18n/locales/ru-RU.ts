@@ -656,7 +656,11 @@ export default {
     cancelParse: 'Остановить разбор',
     cancelParseConfirmBody: 'Остановить разбор «{title}»? Уже записанные фрагменты сохранятся, и их можно будет разобрать заново через «Пересобрать». Ожидающие задачи оптимизации (резюме / вопросы и ответы / граф знаний) будут немедленно отменены.',
     cancelParseSubmitted: 'Разбор остановлен',
-    cancelParseFailed: 'Не удалось остановить, попробуйте позже'
+    cancelParseFailed: 'Не удалось остановить, попробуйте позже',
+    loading: 'Загрузка...',
+    selectKnowledgeBase: 'Выберите базу знаний',
+    createSessionFailed: 'Не удалось создать сессию',
+    createSessionError: 'Ошибка создания сессии',
   },
   uploadConfirm: {
     title: 'Подтверждение загрузки',
@@ -1288,7 +1292,8 @@ export default {
       mineruHtmlLabel: 'MinerU-HTML (HTML парсинг)',
       paddleocrVlEndpointPlaceholder: 'напр. http://your-paddleocr-vl:8080',
       paddleocrVlEndpointHint: 'Адрес полного сервиса PaddleOCR-VL (pipeline); суффикс /layout-parsing не требуется',
-      paddleocrVlCloudTokenPlaceholder: 'Токен PaddleOCR-VL AI Studio'
+      paddleocrVlCloudTokenPlaceholder: 'Токен PaddleOCR-VL AI Studio',
+      checking: 'Проверка...',
     },
     storage: {
       title: 'Хранилище',
@@ -1922,7 +1927,13 @@ export default {
     collapse: 'Свернуть',
     me: 'Я',
     copy: 'Копировать',
-    copied: 'Скопировано'
+    copied: 'Скопировано',
+    avatar: 'Аватар',
+    copySuccess: 'Скопировано',
+    createSuccess: 'Создано',
+    updateSuccess: 'Обновлено',
+    operationFailed: 'Операция не удалась',
+    loadMore: 'Загрузить ещё',
   },
   mentionDetail: {
     faqCount: '{count} вопросов и ответов',
@@ -1943,7 +1954,8 @@ export default {
     preview: 'Предпросмотр',
     unsupportedFormat: 'Неподдерживаемый формат файла',
     maxSizeExceeded: 'Превышен максимальный размер файла',
-    selectFile: 'Выберите файл'
+    selectFile: 'Выберите файл',
+    downloadFailed: 'Ошибка загрузки',
   },
   tenant: {
     title: 'Информация об арендаторе',
@@ -2578,7 +2590,11 @@ export default {
       getApiPrincipalConfigFailed: 'Не удалось получить конфигурацию API principal',
       updateApiPrincipalConfigFailed: 'Не удалось обновить конфигурацию API principal',
       createApiPrincipalTestTokenFailed: 'Не удалось создать тестовый API Token',
-      updateFailed: 'Не удалось обновить информацию об арендаторе'
+      updateFailed: 'Не удалось обновить информацию об арендаторе',
+      createFailed: 'Не удалось создать пространство',
+      createApiKeyFailed: 'Не удалось создать API-ключ',
+      deleteApiKeyFailed: 'Не удалось удалить API-ключ',
+      listApiKeysFailed: 'Не удалось получить список API-ключей',
     },
     initialization: {
       checkFailed: 'Проверка не пройдена',
@@ -3407,7 +3423,8 @@ export default {
       negativeQuestionsDesc: 'Add questions that should not match this answer, to exclude false positives.',
       addFaq: 'Add FAQ',
       manageFaq: 'FAQ Actions',
-      createGroup: 'New'
+      createGroup: 'New',
+      selectEntriesFirst: 'Сначала выберите записи FAQ',
     },
     faqImport: {
       title: 'Пакетный импорт FAQ',
@@ -5840,6 +5857,7 @@ export default {
     syncResultCreated: '+{n}',
     syncResultUpdated: '~{n}',
     syncResultDeleted: '-{n}',
+    resumeFailed: 'Не удалось возобновить',
   },
   integrations: {
     title: 'Публикация и интеграция',
@@ -6361,5 +6379,10 @@ export default {
     maxDepthExceeded: 'Достигнут предел максимальной глубины',
     uploadTargetHint: 'Файлы будут загружены в: {path}',
     fileAndFolderCount: '{folders} папок, {files} файлов',
+    moveFolderFailed: 'Не удалось переместить папку',
+    moveFolderSuccess: 'Папка перемещена',
+  },
+  knowledge: {
+    untitledDocument: 'Безымянный документ',
   },
 }

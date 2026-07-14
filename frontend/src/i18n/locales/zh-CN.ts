@@ -591,9 +591,6 @@ export default {
     confirmDeleteDocument: '确认删除文档"{fileName}"，删除后将无法恢复',
     cancel: "取消",
     confirmDelete: "确认删除",
-    viewModeGrid: "卡片视图",
-    viewModeList: "列表视图",
-    viewModeToggle: "切换视图",
     columnName: "文件名",
     columnTag: "标签",
     columnSize: "大小",
@@ -697,6 +694,10 @@ export default {
     allUploadFailed: "所有文件上传失败（{count}个）",
     deleteSuccess: "知识删除成功！",
     chunkLoadFailed: "分块加载失败",
+    loading: "加载中...",
+    selectKnowledgeBase: "请选择知识库",
+    createSessionFailed: "创建会话失败",
+    createSessionError: "创建会话出错",
   },
   uploadConfirm: {
     title: "上传文档确认",
@@ -1250,6 +1251,7 @@ export default {
       paddleocrVlEndpointPlaceholder: "如 http://your-paddleocr-vl:8080",
       paddleocrVlEndpointHint: "填写 PaddleOCR-VL 完整服务（pipeline）地址，无需 /layout-parsing 后缀",
       paddleocrVlCloudTokenPlaceholder: "PaddleOCR-VL 飞桨星河社区 Token",
+      checking: "检查中...",
     },
     storage: {
       title: "存储引擎",
@@ -1913,12 +1915,17 @@ export default {
     knowledgeBase: "知识库",
     folder: "文件夹",
     noResult: "无结果",
-    remove: "移除",
     defaultUser: "用户",
     copyFailed: "复制失败",
     retry: "重试",
     expand: "展开",
     collapse: "收起",
+    avatar: "头像",
+    copySuccess: "复制成功",
+    createSuccess: "创建成功",
+    updateSuccess: "更新成功",
+    operationFailed: "操作失败",
+    loadMore: "加载更多",
   },
   mentionDetail: {
     faqCount: "共 {count} 条问答",
@@ -2246,6 +2253,7 @@ export default {
     unsupportedFormat: "不支持的文件格式",
     maxSizeExceeded: "文件大小超过限制",
     selectFile: "选择文件",
+    downloadFailed: "下载失败",
   },
   tenant: {
     title: "空间信息",
@@ -2903,6 +2911,10 @@ export default {
       createApiPrincipalTestTokenFailed: "生成 API 测试 Token 失败",
       updateFailed: "更新空间信息失败",
       deleteFailed: "删除空间失败",
+      createFailed: "创建空间失败",
+      createApiKeyFailed: "创建 API Key 失败",
+      deleteApiKeyFailed: "删除 API Key 失败",
+      listApiKeysFailed: "获取 API Key 列表失败",
     },
     initialization: {
       checkFailed: "检查失败",
@@ -3969,6 +3981,7 @@ export default {
       batchDisable: "批量禁用",
       batchEnableRecommended: "批量开启推荐",
       batchDisableRecommended: "批量关闭推荐",
+      selectEntriesFirst: "请先选择 FAQ 条目",
     },
     faqImport: {
       title: "批量导入 FAQ",
@@ -6031,6 +6044,7 @@ export default {
     syncResultUpdated: "~{n}",
     syncResultDeleted: "-{n}",
     moreActions: "更多",
+    resumeFailed: "恢复失败",
   },
   integrations: {
     title: "发布集成",
@@ -6656,5 +6670,10 @@ export default {
     maxDepthExceeded: "已达到最大层级限制",
     uploadTargetHint: "文件将上传到：{path}",
     fileAndFolderCount: "{folders} 个文件夹，{files} 个文件",
+    moveFolderFailed: "移动文件夹失败",
+    moveFolderSuccess: "移动文件夹成功",
+  },
+  knowledge: {
+    untitledDocument: "未命名文档",
   },
 };
