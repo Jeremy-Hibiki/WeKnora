@@ -46,6 +46,8 @@ type RetrieveParams struct {
 	KnowledgeBaseIDs []string
 	// Knowledge IDs
 	KnowledgeIDs []string
+	// Folder IDs for vector-store-level metadata filtering
+	FolderIDs []string
 	// Tag IDs for filtering (used for FAQ priority filtering)
 	TagIDs []string
 	// Excluded knowledge IDs

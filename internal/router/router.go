@@ -49,6 +49,7 @@ type RouterParams struct {
 	AgentShareService            interfaces.AgentShareService
 	KBHandler                    *handler.KnowledgeBaseHandler
 	KnowledgeHandler             *handler.KnowledgeHandler
+	KnowledgeFolderHandler       *handler.KnowledgeFolderHandler
 	TenantHandler                *handler.TenantHandler
 	TenantService                interfaces.TenantService
 	TenantAPIKeyService          interfaces.TenantAPIKeyService
@@ -218,6 +219,7 @@ func NewRouter(params RouterParams) *gin.Engine {
 		// /files route cannot serve because it enforces same-tenant paths.
 		serveKBScopedFiles(v1, rbacGuards, params.TenantService, params.FileService)
 		RegisterKnowledgeTagRoutes(v1, params.TagHandler, rbacGuards)
+		RegisterKnowledgeFolderRoutes(v1, params.KnowledgeFolderHandler, rbacGuards)
 		RegisterKnowledgeRoutes(v1, params.KnowledgeHandler, rbacGuards)
 		RegisterFAQRoutes(v1, params.FAQHandler, rbacGuards)
 		RegisterChunkRoutes(v1, params.ChunkHandler, rbacGuards)
@@ -229,6 +231,13 @@ func NewRouter(params RouterParams) *gin.Engine {
 		RegisterInitializationRoutes(v1, params.InitializationHandler, rbacGuards)
 		RegisterSystemRoutes(v1, params.SystemHandler, rbacGuards)
 		RegisterSystemAdminRoutes(v1, params.SystemHandler, params.AuditLogHandler, rbacGuards)
+
+		// Platform-wide admin maintenance (SystemAdmin only). These span
+		// all tenants, so they live outside the per-tenant RBAC matrix.
+		adminMaintenance := v1.Group("/admin", rbacGuards.SystemAdmin())
+		{
+			adminMaintenance.POST("/vector-stores/backfill-folder-metadata", params.KnowledgeHandler.BackfillFolderMetadata)
+		}
 		RegisterMCPServiceRoutes(v1, params.MCPServiceHandler, params.MCPCredentialsHandler, params.MCPOAuthHandler, rbacGuards)
 		RegisterWebSearchRoutes(v1, params.WebSearchHandler, rbacGuards)
 		RegisterWebSearchProviderRoutes(v1, params.WebSearchProviderHandler, params.WebSearchCredentialsHandler, rbacGuards)
@@ -316,6 +325,9 @@ func RegisterKnowledgeRoutes(r *gin.RouterGroup, handler *handler.KnowledgeHandl
 		kb.POST("/url", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), handler.CreateKnowledgeFromURL)
 		kb.POST("/manual", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), handler.CreateManualKnowledge)
 		kbRead.GET("", g.Viewer(), g.KBAccessRead("id"), handler.ListKnowledge)
+		// Folder / zip uploads reconstruct the directory tree automatically.
+		kb.POST("/folder", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), handler.UploadFolder)
+		kb.POST("/zip", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), handler.UploadZip)
 		// Clearing all contents under a KB is a destructive op; gate
 		// behind Admin instead of Contributor.
 		kb.With(apiKeyFullAccess()).DELETE("", g.Admin(), g.KBAccessWrite("id"), handler.ClearKnowledgeBaseContents)
@@ -352,6 +364,10 @@ func RegisterKnowledgeRoutes(r *gin.RouterGroup, handler *handler.KnowledgeHandl
 		kgrp.POST("/batch-reparse", g.Contributor(), handler.BatchReparseKnowledge)
 		kgrp.POST("/batch-delete", g.Contributor(), handler.BatchDeleteKnowledge)
 		kgrp.POST("/move", g.Contributor(), handler.MoveKnowledge)
+
+		// Folder operations for knowledge entries
+		kgrp.PUT("/:id/folder", g.OwnedKnowledgeKBOrAdmin(), g.KBAccessWriteFromKnowledgeIDParam("id"), handler.MoveKnowledgeToFolder)
+		kgrp.POST("/batch-move-folder", g.Contributor(), handler.BatchMoveKnowledgeToFolder)
 	}
 }
 

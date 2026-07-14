@@ -185,6 +185,13 @@ func (g *pgRepository) KeywordsRetrieve(ctx context.Context,
 			Values: common.ToInterfaceSlice(params.KnowledgeIDs),
 		})
 	}
+	if len(params.FolderIDs) > 0 {
+		logger.GetLogger(ctx).Debugf("[Postgres] Filtering by folder IDs: %v", params.FolderIDs)
+		conds = append(conds, clause.IN{
+			Column: "folder_id",
+			Values: common.ToInterfaceSlice(params.FolderIDs),
+		})
+	}
 	// Filter by tag IDs if specified
 	if len(params.TagIDs) > 0 {
 		logger.GetLogger(ctx).Debugf("[Postgres] Filtering by tag IDs: %v", params.TagIDs)
@@ -312,6 +319,20 @@ func (g *pgRepository) VectorRetrieve(ctx context.Context,
 			allVars = append(allVars, params.KnowledgeIDs[i])
 		}
 		whereParts = append(whereParts, fmt.Sprintf("knowledge_id IN (%s)",
+			strings.Join(placeholders, ", ")))
+	}
+	if len(params.FolderIDs) > 0 {
+		logger.GetLogger(ctx).Debugf(
+			"[Postgres] Filtering vector search by folder IDs: %v",
+			params.FolderIDs,
+		)
+		placeholders := make([]string, len(params.FolderIDs))
+		paramStart := len(allVars) + 1
+		for i := range params.FolderIDs {
+			placeholders[i] = fmt.Sprintf("$%d", paramStart+i)
+			allVars = append(allVars, params.FolderIDs[i])
+		}
+		whereParts = append(whereParts, fmt.Sprintf("folder_id IN (%s)",
 			strings.Join(placeholders, ", ")))
 	}
 	// Filter by tag IDs if specified
@@ -695,5 +716,37 @@ func (g *pgRepository) BatchUpdateChunkTagID(ctx context.Context, chunkTagMap ma
 	}
 
 	logger.GetLogger(ctx).Infof("[Postgres] Successfully batch updated chunk tag ID")
+	return nil
+}
+
+// BatchUpdateFolderID updates the folder ID of all chunks belonging to the given knowledge entries in batch
+func (g *pgRepository) BatchUpdateFolderID(ctx context.Context, knowledgeFolderMap map[string]string) error {
+	if len(knowledgeFolderMap) == 0 {
+		logger.GetLogger(ctx).Warnf("[Postgres] Knowledge folder map is empty, skipping update")
+		return nil
+	}
+
+	logger.GetLogger(ctx).Infof("[Postgres] Batch updating folder ID, count: %d", len(knowledgeFolderMap))
+
+	// Group knowledge IDs by folder ID for batch updates
+	folderGroups := make(map[string][]string)
+	for knowledgeID, folderID := range knowledgeFolderMap {
+		folderGroups[folderID] = append(folderGroups[folderID], knowledgeID)
+	}
+
+	// Batch update chunks for each folder ID
+	for folderID, knowledgeIDs := range folderGroups {
+		result := g.db.WithContext(ctx).Model(&pgVector{}).
+			Where("knowledge_id IN ?", knowledgeIDs).
+			Update("folder_id", folderID)
+		if result.Error != nil {
+			logger.GetLogger(ctx).Errorf("[Postgres] Failed to update chunks with folder_id %s: %v", folderID, result.Error)
+			return result.Error
+		}
+		logger.GetLogger(ctx).
+			Infof("[Postgres] Updated %d knowledge entries to folder_id=%s, rows affected: %d", len(knowledgeIDs), folderID, result.RowsAffected)
+	}
+
+	logger.GetLogger(ctx).Infof("[Postgres] Successfully batch updated folder ID")
 	return nil
 }

@@ -16,6 +16,13 @@
       multiple
       @change="(e) => handleFilesChange(e, true)"
     />
+    <input
+      ref="zipInputRef"
+      type="file"
+      class="hidden-file-input"
+      accept=".zip"
+      @change="(e) => handleFilesChange(e, false)"
+    />
 
     <t-tooltip :content="tooltipText" placement="top">
       <t-dropdown
@@ -96,6 +103,7 @@ const { t } = useI18n()
 
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const folderInputRef = ref<HTMLInputElement | null>(null)
+const zipInputRef = ref<HTMLInputElement | null>(null)
 const urlDialogVisible = ref(false)
 const urlInputValue = ref('')
 
@@ -112,6 +120,11 @@ const dropdownOptions = computed(() => {
       content: t('upload.uploadFolder'),
       value: 'uploadFolder',
       prefixIcon: () => h(TIcon, { name: 'folder-add', size: '16px' }),
+    },
+    {
+      content: t('upload.uploadZip'),
+      value: 'uploadZip',
+      prefixIcon: () => h(TIcon, { name: 'file-paste', size: '16px' }),
     },
     {
       content: t('knowledgeBase.importURL'),
@@ -136,6 +149,9 @@ const handleActionSelect = (data: { value: string }) => {
       break
     case 'uploadFolder':
       folderInputRef.value?.click()
+      break
+    case 'uploadZip':
+      zipInputRef.value?.click()
       break
     case 'importURL':
       urlInputValue.value = ''

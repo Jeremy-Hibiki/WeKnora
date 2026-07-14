@@ -23,6 +23,7 @@ type WeaviateVectorEmbedding struct {
 	KnowledgeID     string    `json:"knowledge_id"`
 	KnowledgeBaseID string    `json:"knowledge_base_id"`
 	TagID           string    `json:"tag_id"`
+	FolderID        string    `json:"folder_id"`
 	Embedding       []float32 `json:"embedding"`
 	IsEnabled       bool      `json:"is_enabled"`
 }

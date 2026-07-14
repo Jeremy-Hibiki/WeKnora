@@ -16,6 +16,7 @@ const emit = defineEmits<{
   (e: 'delete'): void;
   (e: 'reparse'): void;
   (e: 'batch-tag'): void;
+  (e: 'move-folder'): void;
 }>();
 
 const { t } = useI18n();
@@ -40,6 +41,11 @@ const { t } = useI18n();
             {{ t('knowledgeBase.batchTag') }}
           </t-button>
 
+          <t-button theme="default" variant="outline" size="small"
+            :disabled="count === 0 || deleteLoading || reparseLoading" @click.stop="emit('move-folder')">
+            <template #icon><t-icon name="folder-import" size="14px" /></template>
+            {{ t('knowledgeBase.moveToFolder') }}
+          </t-button>
           <t-popconfirm theme="warning" :content="t('knowledgeBase.confirmBatchReparseDocument', { count })"
             :confirm-btn="{ content: t('knowledgeBase.confirmBatchReparse'), theme: 'warning' }"
             :cancel-btn="{ content: t('common.cancel') }" placement="top" @confirm="emit('reparse')">

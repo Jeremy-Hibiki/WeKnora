@@ -50,13 +50,19 @@ const props = defineProps<{
   moveSelectedTargetName: string;
   moveMode: 'reuse_vectors' | 'reparse';
   moveSubmitting: boolean;
+  // Whether the KB has folders (gates 'move to folder' menu item).
+  folderTreePresent?: boolean;
+  // When true, render card items without the outer .doc-card-list grid
+  // wrapper so they can participate in a parent grid (e.g. alongside
+  // folder cards rendered inline in KnowledgeBase.vue).
+  inline?: boolean;
 }>();
 
 const emit = defineEmits<{
   (e: 'open', item: KnowledgeCard): void;
   (e: 'toggle-checkbox', id: string, checked: boolean, ctx?: { e?: Event }): void;
   (e: 'menu-visible-change', visible: boolean, item: KnowledgeCard): void;
-  (e: 'action', action: 'edit' | 'view-trace' | 'reparse' | 'cancel-parse' | 'move' | 'batch-manage' | 'delete', item: KnowledgeCard): void;
+  (e: 'action', action: 'edit' | 'view-trace' | 'reparse' | 'cancel-parse' | 'move' | 'move-folder' | 'batch-manage' | 'delete', item: KnowledgeCard): void;
   (e: 'tag-edit', item: KnowledgeCard): void;
   // Move sub-flow emits
   (e: 'move-select-target', kb: any): void;
@@ -250,7 +256,7 @@ const onCardMouseLeave = () => {
 };
 
 // --- Action handlers ---
-const handleAction = (action: 'edit' | 'view-trace' | 'reparse' | 'cancel-parse' | 'move' | 'batch-manage' | 'delete', item: KnowledgeCard) => {
+const handleAction = (action: 'edit' | 'view-trace' | 'reparse' | 'cancel-parse' | 'move' | 'move-folder' | 'batch-manage' | 'delete', item: KnowledgeCard) => {
   // Don't close menu for move — it triggers the sub-flow
   if (action !== 'move') {
     if (item.isMore !== undefined) item.isMore = false;
@@ -261,7 +267,7 @@ const handleAction = (action: 'edit' | 'view-trace' | 'reparse' | 'cancel-parse'
 </script>
 
 <template>
-  <div class="doc-card-list doc-card-list-animated">
+  <div class="doc-card-list doc-card-list-animated" :class="{ 'doc-card-list--inline': inline }">
     <div
       class="knowledge-card"
       :class="{ 'is-selected': selectedIds.has(item.id), 'batch-mode': batchMode }"
@@ -308,11 +314,13 @@ const handleAction = (action: 'edit' | 'view-trace' | 'reparse' | 'cancel-parse'
                   :item="item"
                   :can-mutate-knowledge="canMutateKnowledge"
                   :trace-visible="isTraceMenuVisible(item)"
+                  :folder-tree-present="folderTreePresent"
                   @edit="handleAction('edit', item)"
                   @view-trace="handleAction('view-trace', item)"
                   @reparse="handleAction('reparse', item)"
                   @cancel-parse="handleAction('cancel-parse', item)"
                   @move="handleAction('move', item)"
+                  @move-folder="handleAction('move-folder', item)"
                   @batch-manage="handleAction('batch-manage', item)"
                   @delete="handleAction('delete', item)"
                 />
@@ -608,6 +616,12 @@ const handleAction = (action: 'edit' | 'view-trace' | 'reparse' | 'cancel-parse'
 
   &.doc-card-list-animated {
     animation: contentFadeIn 0.32s ease-out;
+  }
+
+  // When inline, dissolve the wrapper so card children participate
+  // directly in the parent grid (folder + document cards mixed together).
+  &.doc-card-list--inline {
+    display: contents;
   }
 }
 

@@ -29,6 +29,7 @@ const (
 	fieldKnowledgeID      = "knowledge_id"
 	fieldKnowledgeBaseID  = "knowledge_base_id"
 	fieldTagID            = "tag_id"
+	fieldFolderID         = "folder_id"
 	fieldEmbedding        = "embedding"
 	fieldIsEnabled        = "is_enabled"
 	fieldID               = "id"
@@ -126,6 +127,11 @@ func (w *weaviateRepository) ensureCollection(ctx context.Context, dimension int
 				},
 				{
 					Name:            fieldTagID,
+					DataType:        []string{"text"},
+					IndexFilterable: &enabled,
+				},
+				{
+					Name:            fieldFolderID,
 					DataType:        []string{"text"},
 					IndexFilterable: &enabled,
 				},
@@ -474,6 +480,114 @@ func (w *weaviateRepository) BatchUpdateChunkTagID(ctx context.Context, chunkTag
 
 }
 
+// BatchUpdateFolderID updates the folder ID of all chunks belonging to the
+// given knowledge entries in batch. Unlike BatchUpdateChunkTagID (which can
+// use chunkID directly as the Weaviate object UUID), this method must first
+// query objects by knowledge_id to discover their UUIDs, then update each.
+func (w *weaviateRepository) BatchUpdateFolderID(ctx context.Context, knowledgeFolderMap map[string]string) error {
+	log := logger.GetLogger(ctx)
+	if len(knowledgeFolderMap) == 0 {
+		log.Warn("[Weaviate] Empty knowledge folder map provided, skipping")
+		return nil
+	}
+
+	log.Infof("[Weaviate] Batch updating folder ID, count: %d", len(knowledgeFolderMap))
+
+	collections, err := w.ListCollections(ctx)
+	if err != nil {
+		log.Errorf("[Weaviate] Failed to list collections: %v", err)
+		return fmt.Errorf("failed to list collections: %w", err)
+	}
+
+	idFields := []graphql.Field{
+		{
+			Name: "_additional",
+			Fields: []graphql.Field{
+				{Name: "id"},
+			},
+		},
+	}
+
+	const batchSize = 100
+
+	for _, collectionName := range collections {
+		if len(collectionName) <= len(w.collectionBaseName) ||
+			collectionName[:len(w.collectionBaseName)] != w.collectionBaseName {
+			continue
+		}
+
+		for knowledgeID, folderID := range knowledgeFolderMap {
+			var lastID string
+			for {
+				query := w.client.GraphQL().Get().
+					WithClassName(collectionName).
+					WithWhere(filters.Where().
+						WithPath([]string{fieldKnowledgeID}).
+						WithOperator(filters.Equal).
+						WithValueString(knowledgeID)).
+					WithLimit(batchSize).
+					WithFields(idFields...)
+				if lastID != "" {
+					query = query.WithAfter(lastID)
+				}
+
+				result, err := query.Do(ctx)
+				if err != nil {
+					log.Warnf("[Weaviate] Failed to query objects by knowledge_id %s in %s: %v", knowledgeID, collectionName, err)
+					break
+				}
+				if len(result.Errors) > 0 {
+					log.Warnf("[Weaviate] GraphQL error querying knowledge_id %s in %s: %v", knowledgeID, collectionName, result.Errors)
+					break
+				}
+
+				data, ok := result.Data["Get"].(map[string]interface{})
+				if !ok || data[collectionName] == nil {
+					break
+				}
+				items, ok := data[collectionName].([]interface{})
+				if !ok || len(items) == 0 {
+					break
+				}
+
+				for _, obj := range items {
+					objMap, ok := obj.(map[string]interface{})
+					if !ok {
+						continue
+					}
+					additional, ok := objMap["_additional"].(map[string]interface{})
+					if !ok {
+						continue
+					}
+					id, ok := additional["id"].(string)
+					if !ok {
+						continue
+					}
+					lastID = id
+
+					err := w.client.Data().Updater().
+						WithClassName(collectionName).
+						WithID(id).
+						WithProperties(map[string]interface{}{
+							fieldFolderID: folderID,
+						}).
+						Do(ctx)
+					if err != nil {
+						log.Warnf("[Weaviate] Failed to update folder_id for object %s in %s: %v", id, collectionName, err)
+					}
+				}
+
+				if len(items) < batchSize {
+					break
+				}
+			}
+		}
+	}
+
+	log.Infof("[Weaviate] Batch update folder ID completed")
+	return nil
+}
+
 func (w *weaviateRepository) getBaseFilter(params types.RetrieveParams) *filters.WhereBuilder {
 	var operands []*filters.WhereBuilder
 	operands = append(operands, filters.Where().
@@ -492,6 +606,12 @@ func (w *weaviateRepository) getBaseFilter(params types.RetrieveParams) *filters
 			WithPath([]string{fieldKnowledgeID}).
 			WithOperator(filters.ContainsAny).
 			WithValueText(params.KnowledgeIDs...))
+	}
+	if len(params.FolderIDs) > 0 {
+		operands = append(operands, filters.Where().
+			WithPath([]string{fieldFolderID}).
+			WithOperator(filters.ContainsAny).
+			WithValueText(params.FolderIDs...))
 	}
 
 	if len(params.TagIDs) > 0 {
@@ -837,6 +957,7 @@ func createPayload(embedding *WeaviateVectorEmbedding) map[string]interface{} {
 		fieldKnowledgeID:     embedding.KnowledgeID,
 		fieldKnowledgeBaseID: embedding.KnowledgeBaseID,
 		fieldTagID:           embedding.TagID,
+		fieldFolderID:        embedding.FolderID,
 		fieldIsEnabled:       embedding.IsEnabled,
 	}
 	return payload
@@ -1007,6 +1128,7 @@ func toWeaviateVectorEmbedding(embedding *types.IndexInfo, additionalParams map[
 		KnowledgeID:     embedding.KnowledgeID,
 		KnowledgeBaseID: embedding.KnowledgeBaseID,
 		TagID:           embedding.TagID,
+		FolderID:        embedding.FolderID,
 		IsEnabled:       embedding.IsEnabled,
 	}
 	if additionalParams != nil && slices.Contains(slices.Collect(maps.Keys(additionalParams)), fieldEmbedding) {

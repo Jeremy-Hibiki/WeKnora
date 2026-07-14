@@ -13,6 +13,7 @@ import (
 
 	"go.uber.org/dig"
 
+	"github.com/Tencent/WeKnora/internal/config"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
@@ -50,6 +51,29 @@ func runStartupBootstrap(c *dig.Container) {
 		}
 	}); err != nil {
 		logger.Warnf(ctx, "[bootstrap] failed to resolve TenantAPIKeyService: %v", err)
+	}
+
+	// Optional one-shot folder_id metadata backfill for vector stores.
+	// Enabled by config flag only — off by default so existing deployments
+	// must explicitly opt in. Best-effort: failures are logged, not fatal.
+	if err := c.Invoke(func(cfg *config.Config, kgSvc interfaces.KnowledgeService) {
+		if cfg == nil || cfg.Server == nil || !cfg.Server.AutoBackfillFolderMetadata {
+			return
+		}
+		logger.Infof(ctx, "[bootstrap] starting folder metadata backfill")
+		result, err := kgSvc.BackfillFolderMetadata(ctx, "")
+		if err != nil {
+			logger.Warnf(ctx, "[bootstrap] folder metadata backfill failed: %v", err)
+			return
+		}
+		logger.Infof(ctx,
+			"[bootstrap] folder metadata backfill complete: %d/%d KBs processed, %d knowledge entries updated, %d errors",
+			result.ProcessedKBs, result.TotalKBs, result.TotalKnowledgeUpdated, len(result.Errors))
+		for _, e := range result.Errors {
+			logger.Warnf(ctx, "[bootstrap] backfill error for KB %s: %s", e.KBID, e.Error)
+		}
+	}); err != nil {
+		logger.Warnf(ctx, "[bootstrap] failed to resolve dependencies for folder metadata backfill: %v", err)
 	}
 
 	email := strings.TrimSpace(os.Getenv(bootstrapEnvVar))

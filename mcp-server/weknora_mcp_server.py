@@ -215,7 +215,7 @@ class WeKnoraClient:
         if isinstance(agents, dict):
             agents = agents.get("list", agents.get("items", []))
         needle = agent_id_or_name.lower()
-        for agent in (agents or []):
+        for agent in agents or []:
             if isinstance(agent, dict) and agent.get("name", "").lower() == needle:
                 return agent["id"]
         raise ValueError(
@@ -238,7 +238,7 @@ class WeKnoraClient:
         if isinstance(kbs, dict):
             kbs = kbs.get("list", kbs.get("items", []))
         needle = kb_id_or_name.lower()
-        for kb in (kbs or []):
+        for kb in kbs or []:
             if isinstance(kb, dict) and kb.get("name", "").lower() == needle:
                 return kb["id"]
         raise ValueError(
@@ -386,19 +386,21 @@ class WeKnoraClient:
 
         Centralised helper used by both chat() and agent_chat().
         Timeout: (10s connect, WEKNORA_CHAT_TIMEOUT read) — configurable via env var.
-        
+
         Server-Sent Events (SSE) stream format:
           data: {"response_type": "answer", "content": "..."}
           data: {"response_type": "references", "knowledge_references": [...]}
           data: {"response_type": "complete"}
-        
+
         We accumulate answer chunks and extract references, returning them as a dict.
         """
         try:
             # POST with stream=True to receive server-sent events incrementally
             # Timeout: 10s to establish connection, WEKNORA_CHAT_TIMEOUT for reading response
             response = self.session.post(
-                url, json=body, stream=True,
+                url,
+                json=body,
+                stream=True,
                 timeout=(10, WEKNORA_CHAT_TIMEOUT),
             )
             response.raise_for_status()
@@ -425,7 +427,12 @@ class WeKnoraClient:
                         continue
 
                     response_type = event_data.get("response_type", "")
-                    debug_events.append({"type": response_type, "content": event_data.get("content", "")[:80]})
+                    debug_events.append(
+                        {
+                            "type": response_type,
+                            "content": event_data.get("content", "")[:80],
+                        }
+                    )
 
                     # Parse different SSE event types: answer chunks, references, errors, completion
                     if response_type == "answer":
@@ -457,11 +464,15 @@ class WeKnoraClient:
         knowledge_base_ids: list = None,
         web_search_enabled: bool = False,
         enable_memory: bool = False,
+        folder_ids: list = None,
+        tag_ids: list = None,
+        include_subfolders: bool = False,
     ) -> Dict:
         """Send a message to the RAG pipeline (knowledge-chat) and return the assembled answer.
 
         Provide *knowledge_base_ids* (UUID or name) so the backend can retrieve
         relevant chunks before summarising with the LLM.
+        Optionally restrict retrieval scope with *folder_ids* / *tag_ids*.
         For agentic tool-calling use agent_chat() instead.
         """
         url = f"{self.base_url}/knowledge-chat/{session_id}"
@@ -472,6 +483,12 @@ class WeKnoraClient:
             body["web_search_enabled"] = True
         if enable_memory:
             body["enable_memory"] = True
+        if folder_ids:
+            body["folder_ids"] = folder_ids
+        if tag_ids:
+            body["tag_ids"] = tag_ids
+        if include_subfolders and folder_ids:
+            body["include_subfolders"] = True
         result = self._consume_sse_stream(url, body)
         result["session_id"] = session_id
         return result
@@ -484,6 +501,9 @@ class WeKnoraClient:
         knowledge_base_ids: list = None,
         web_search_enabled: bool = False,
         enable_memory: bool = False,
+        folder_ids: list = None,
+        tag_ids: list = None,
+        include_subfolders: bool = False,
     ) -> Dict:
         """Send a message to the agentic pipeline (agent-chat) and return the assembled answer.
 
@@ -491,6 +511,7 @@ class WeKnoraClient:
         tool selection (knowledge_search, web_search, SQL, etc.).
         The agent autonomously decides which knowledge bases to query;
         pass *knowledge_base_ids* to override or supplement the agent's default KBs.
+        Optionally restrict retrieval scope with *folder_ids* / *tag_ids*.
         """
         url = f"{self.base_url}/agent-chat/{session_id}"
         body: Dict[str, Any] = {"query": query, "agent_id": agent_id, "channel": "api"}
@@ -500,13 +521,21 @@ class WeKnoraClient:
             body["web_search_enabled"] = True
         if enable_memory:
             body["enable_memory"] = True
+        if folder_ids:
+            body["folder_ids"] = folder_ids
+        if tag_ids:
+            body["tag_ids"] = tag_ids
+        if include_subfolders and folder_ids:
+            body["include_subfolders"] = True
         result = self._consume_sse_stream(url, body)
         result["session_id"] = session_id
         return result
 
     def list_agents(self, page: int = 1, page_size: int = 50) -> Dict:
         """List all custom agents available to the current tenant."""
-        return self._request("GET", "/agents", params={"page": page, "page_size": page_size})
+        return self._request(
+            "GET", "/agents", params={"page": page, "page_size": page_size}
+        )
 
     def get_agent(self, agent_id: str) -> Dict:
         """Get full config of a single agent by UUID."""
@@ -544,6 +573,98 @@ class WeKnoraClient:
             f"/knowledgebase/{kb_id}/wiki/index",
             params={"limit": limit},
         )
+
+    # Folder & Tag Management - Methods for organizing knowledge entries
+    def list_kb_folders(self, kb_id: str) -> Dict:
+        """Get the complete folder tree for a knowledge base.
+
+        Returns a nested list of folders (each with optional ``children``).
+        Each folder carries ``id``, ``name``, ``path``, ``knowledge_count``.
+        """
+        return self._request("GET", f"/knowledge-bases/{kb_id}/folders/tree")
+
+    def list_kb_tags(self, kb_id: str, page: int = 1, page_size: int = 100) -> Dict:
+        """List all tags in a knowledge base with usage statistics.
+
+        Returns ``{"success": true, "data": [...]}`` where each tag carries
+        ``id``, ``name``, ``knowledge_count``, ``chunk_count``.
+        """
+        params = {"page": page, "page_size": page_size}
+        return self._request("GET", f"/knowledge-bases/{kb_id}/tags", params=params)
+
+    @staticmethod
+    def _flatten_folder_tree(nodes: list) -> list:
+        """Flatten a nested folder tree (with ``children``) into a flat list."""
+        flat: list = []
+
+        def _walk(items):
+            for node in items or []:
+                if isinstance(node, dict):
+                    flat.append(node)
+                    _walk(node.get("children") or [])
+
+        _walk(nodes)
+        return flat
+
+    def resolve_folder_names_to_ids(self, kb_id: str, folder_names: list) -> list:
+        """Resolve folder names to folder IDs within a single KB (case-insensitive).
+
+        Names that don't match any folder are logged as warnings and omitted
+        rather than raising an error.
+        """
+        resp = self.list_kb_folders(kb_id)
+        folders = resp if isinstance(resp, list) else (resp.get("data") or [])
+        if isinstance(folders, dict):
+            folders = folders.get("list", folders.get("items", []))
+        flat = self._flatten_folder_tree(folders)
+        name_to_ids: Dict[str, list] = {}
+        for f in flat:
+            fid = f.get("id")
+            if fid:
+                name_to_ids.setdefault((f.get("name") or "").lower(), []).append(fid)
+        resolved: list = []
+        for name in folder_names:
+            ids = name_to_ids.get((name or "").lower())
+            if ids:
+                resolved.extend(ids)
+            else:
+                logger.warning(
+                    "Folder name %r not found in KB %s; omitting from filter.",
+                    name,
+                    kb_id,
+                )
+        return resolved
+
+    def resolve_tag_names_to_ids(self, kb_id: str, tag_names: list) -> list:
+        """Resolve tag names to tag IDs within a single KB (case-insensitive).
+
+        Names that don't match any tag are logged as warnings and omitted
+        rather than raising an error.
+        """
+        resp = self.list_kb_tags(kb_id, page=1, page_size=1000)
+        tags = resp.get("data") if isinstance(resp, dict) else resp
+        if isinstance(tags, dict):
+            tags = tags.get("list", tags.get("items", []))
+        name_to_ids: Dict[str, list] = {}
+        for t in tags or []:
+            if isinstance(t, dict):
+                tid = t.get("id")
+                if tid:
+                    name_to_ids.setdefault((t.get("name") or "").lower(), []).append(
+                        tid
+                    )
+        resolved: list = []
+        for name in tag_names:
+            ids = name_to_ids.get((name or "").lower())
+            if ids:
+                resolved.extend(ids)
+            else:
+                logger.warning(
+                    "Tag name %r not found in KB %s; omitting from filter.",
+                    name,
+                    kb_id,
+                )
+        return resolved
 
 
 # Initialize MCP server instance
@@ -646,6 +767,53 @@ async def handle_list_tools() -> list[types.Tool]:
                 "required": ["kb_id"],
             },
         ),
+        # Folder & Tag Management
+        types.Tool(
+            name="list_kb_folders",
+            description=(
+                "List the complete folder tree of a knowledge base. "
+                "Returns each folder's id, name, path, and document count (knowledge_count). "
+                "Use folder names with the folder_names parameter of hybrid_search/chat/agent_chat to scope retrieval."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "kb_id": {
+                        "type": "string",
+                        "description": "Knowledge base UUID or name",
+                    },
+                },
+                "required": ["kb_id"],
+            },
+        ),
+        types.Tool(
+            name="list_kb_tags",
+            description=(
+                "List all tags in a knowledge base. "
+                "Returns each tag's id, name, document count (knowledge_count), and chunk count. "
+                "Use tag names with the tag_names parameter of hybrid_search/chat/agent_chat to scope retrieval."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "kb_id": {
+                        "type": "string",
+                        "description": "Knowledge base UUID or name",
+                    },
+                    "page": {
+                        "type": "integer",
+                        "description": "Page number",
+                        "default": 1,
+                    },
+                    "page_size": {
+                        "type": "integer",
+                        "description": "Page size",
+                        "default": 100,
+                    },
+                },
+                "required": ["kb_id"],
+            },
+        ),
         types.Tool(
             name="hybrid_search",
             description="Perform hybrid search in knowledge base",
@@ -671,6 +839,21 @@ async def handle_list_tools() -> list[types.Tool]:
                         "type": "integer",
                         "description": "Number of results to return",
                         "default": 5,
+                    },
+                    "folder_names": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Folder names to restrict retrieval scope (case-insensitive). Resolved to folder IDs automatically. Use list_kb_folders to discover folder names.",
+                    },
+                    "tag_names": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Tag names to restrict retrieval scope (case-insensitive). Resolved to tag IDs automatically. Use list_kb_tags to discover tag names.",
+                    },
+                    "include_subfolders": {
+                        "type": "boolean",
+                        "description": "When true with folder_names, also search descendant subfolders.",
+                        "default": False,
                     },
                 },
                 "required": ["kb_id", "query"],
@@ -839,9 +1022,18 @@ async def handle_list_tools() -> list[types.Tool]:
                         "description": "Fallback response when no answer found",
                         "default": "Sorry, I cannot answer this question.",
                     },
-                    "summary_model_id": {"type": "string", "description": "Model ID for response summarization (optional)"},
-                    "title": {"type": "string", "description": "Session title (optional)"},
-                    "description": {"type": "string", "description": "Session description (optional)"},
+                    "summary_model_id": {
+                        "type": "string",
+                        "description": "Model ID for response summarization (optional)",
+                    },
+                    "title": {
+                        "type": "string",
+                        "description": "Session title (optional)",
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "Session description (optional)",
+                    },
                 },
                 "required": ["kb_id"],
             },
@@ -900,15 +1092,41 @@ async def handle_list_tools() -> list[types.Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "session_id": {"type": "string", "description": "Session ID (from create_session or list_sessions)"},
+                    "session_id": {
+                        "type": "string",
+                        "description": "Session ID (from create_session or list_sessions)",
+                    },
                     "query": {"type": "string", "description": "User query"},
                     "knowledge_base_ids": {
                         "type": "array",
                         "items": {"type": "string"},
                         "description": "Knowledge base names OR UUIDs to search. Strongly recommended for RAG — without them the answer falls back to LLM knowledge only. E.g. ['my-knowledge-base'] or ['a1b2c3d4-...']. Use list_knowledge_bases to find them.",
                     },
-                    "web_search_enabled": {"type": "boolean", "description": "Enable web search alongside KB retrieval.", "default": False},
-                    "enable_memory": {"type": "boolean", "description": "Enable cross-session memory.", "default": False},
+                    "web_search_enabled": {
+                        "type": "boolean",
+                        "description": "Enable web search alongside KB retrieval.",
+                        "default": False,
+                    },
+                    "enable_memory": {
+                        "type": "boolean",
+                        "description": "Enable cross-session memory.",
+                        "default": False,
+                    },
+                    "folder_names": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Folder names to restrict retrieval scope (case-insensitive). Resolved to folder IDs against the provided knowledge_base_ids. Use list_kb_folders to discover folder names.",
+                    },
+                    "tag_names": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Tag names to restrict retrieval scope (case-insensitive). Resolved to tag IDs against the provided knowledge_base_ids. Use list_kb_tags to discover tag names.",
+                    },
+                    "include_subfolders": {
+                        "type": "boolean",
+                        "description": "When true with folder_names, also search descendant subfolders.",
+                        "default": False,
+                    },
                 },
                 "required": ["session_id", "query"],
             },
@@ -928,7 +1146,10 @@ async def handle_list_tools() -> list[types.Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "session_id": {"type": "string", "description": "Session ID (from create_session or list_sessions)"},
+                    "session_id": {
+                        "type": "string",
+                        "description": "Session ID (from create_session or list_sessions)",
+                    },
                     "query": {"type": "string", "description": "User query"},
                     "agent_id": {
                         "type": "string",
@@ -939,8 +1160,31 @@ async def handle_list_tools() -> list[types.Tool]:
                         "items": {"type": "string"},
                         "description": "Names or UUIDs of knowledge bases to search. REQUIRED when the agent's kb_selection_mode is 'none' or 'selected' with no built-in KBs. Use list_knowledge_bases to find them.",
                     },
-                    "web_search_enabled": {"type": "boolean", "description": "Enable web search.", "default": False},
-                    "enable_memory": {"type": "boolean", "description": "Enable cross-session memory.", "default": False},
+                    "web_search_enabled": {
+                        "type": "boolean",
+                        "description": "Enable web search.",
+                        "default": False,
+                    },
+                    "enable_memory": {
+                        "type": "boolean",
+                        "description": "Enable cross-session memory.",
+                        "default": False,
+                    },
+                    "folder_names": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Folder names to restrict retrieval scope (case-insensitive). Resolved to folder IDs against the provided knowledge_base_ids. Use list_kb_folders to discover folder names.",
+                    },
+                    "tag_names": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Tag names to restrict retrieval scope (case-insensitive). Resolved to tag IDs against the provided knowledge_base_ids. Use list_kb_tags to discover tag names.",
+                    },
+                    "include_subfolders": {
+                        "type": "boolean",
+                        "description": "When true with folder_names, also search descendant subfolders.",
+                        "default": False,
+                    },
                 },
                 "required": ["session_id", "query", "agent_id"],
             },
@@ -951,8 +1195,16 @@ async def handle_list_tools() -> list[types.Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "page": {"type": "integer", "description": "Page number", "default": 1},
-                    "page_size": {"type": "integer", "description": "Page size", "default": 50},
+                    "page": {
+                        "type": "integer",
+                        "description": "Page number",
+                        "default": 1,
+                    },
+                    "page_size": {
+                        "type": "integer",
+                        "description": "Page size",
+                        "default": 50,
+                    },
                 },
                 "required": [],
             },
@@ -1059,6 +1311,40 @@ async def handle_list_tools() -> list[types.Tool]:
     ]
 
 
+def _resolve_scope_names(args: dict, kb_ids: list) -> tuple:
+    """Resolve folder_names / tag_names from *args* into (folder_ids, tag_ids).
+
+    Iterates over *kb_ids* to resolve names within each KB (case-insensitive).
+    Names not found in any KB are logged as warnings and silently omitted.
+    Returns ([], []) when no names were provided or no KBs are available to
+    resolve against.
+    """
+    folder_names = args.get("folder_names") or []
+    tag_names = args.get("tag_names") or []
+    if not folder_names and not tag_names:
+        return [], []
+    if not kb_ids:
+        if folder_names:
+            logger.warning(
+                "folder_names provided but no knowledge_base_ids; "
+                "cannot resolve folder names without KB context."
+            )
+        if tag_names:
+            logger.warning(
+                "tag_names provided but no knowledge_base_ids; "
+                "cannot resolve tag names without KB context."
+            )
+        return [], []
+    folder_ids: list = []
+    tag_ids: list = []
+    for kid in kb_ids:
+        if folder_names:
+            folder_ids.extend(client.resolve_folder_names_to_ids(kid, folder_names))
+        if tag_names:
+            tag_ids.extend(client.resolve_tag_names_to_ids(kid, tag_names))
+    return folder_ids, tag_ids
+
+
 @app.call_tool()
 async def handle_call_tool(
     name: str, arguments: dict | None
@@ -1128,6 +1414,17 @@ async def handle_call_tool(
             result = client.get_knowledge_base(args["kb_id"])
         elif name == "delete_knowledge_base":
             result = client.delete_knowledge_base(args["kb_id"])
+
+        # Folder & Tag Management
+        elif name == "list_kb_folders":
+            kb_id = client.resolve_kb_id(args["kb_id"])
+            result = client.list_kb_folders(kb_id)
+        elif name == "list_kb_tags":
+            kb_id = client.resolve_kb_id(args["kb_id"])
+            result = client.list_kb_tags(
+                kb_id, args.get("page", 1), args.get("page_size", 100)
+            )
+
         elif name == "hybrid_search":
             # Configure hybrid search with thresholds and result count
             config = {
@@ -1142,6 +1439,17 @@ async def handle_call_tool(
                 ),  # Number of results to return
             }
             kb_id = client.resolve_kb_id(args["kb_id"])
+            # Resolve folder/tag name scopes to IDs (case-insensitive)
+            folder_names = args.get("folder_names") or []
+            tag_names = args.get("tag_names") or []
+            if folder_names:
+                config["folder_ids"] = client.resolve_folder_names_to_ids(
+                    kb_id, folder_names
+                )
+            if tag_names:
+                config["tag_ids"] = client.resolve_tag_names_to_ids(kb_id, tag_names)
+            if args.get("include_subfolders"):
+                config["include_subfolders"] = True
             result = client.hybrid_search(kb_id, args["query"], config)
 
         # Knowledge Management
@@ -1211,7 +1519,11 @@ async def handle_call_tool(
         elif name == "chat":
             # Resolve KB names → UUIDs to support both human-friendly names and UUIDs
             raw_kb_ids = args.get("knowledge_base_ids") or []
-            kb_ids = [client.resolve_kb_id(k) for k in raw_kb_ids] if raw_kb_ids else None
+            kb_ids = (
+                [client.resolve_kb_id(k) for k in raw_kb_ids] if raw_kb_ids else None
+            )
+            # Resolve folder/tag name scopes to IDs across all provided KBs
+            folder_ids, tag_ids = _resolve_scope_names(args, kb_ids or [])
             # Use run_in_executor to avoid blocking the async event loop during
             # network I/O and SSE streaming. This allows concurrent request handling.
             fn = functools.partial(
@@ -1221,6 +1533,9 @@ async def handle_call_tool(
                 knowledge_base_ids=kb_ids,
                 web_search_enabled=args.get("web_search_enabled", False),
                 enable_memory=args.get("enable_memory", False),
+                folder_ids=folder_ids or None,
+                tag_ids=tag_ids or None,
+                include_subfolders=args.get("include_subfolders", False),
             )
             # get_running_loop() is the correct API inside async functions (get_event_loop() is deprecated)
             result = await asyncio.get_running_loop().run_in_executor(None, fn)
@@ -1232,7 +1547,9 @@ async def handle_call_tool(
             agent_id = client.resolve_agent_id(args["agent_id"])
             # Resolve optional KB overrides (agent may have built-in KBs but user can override)
             raw_kb_ids = args.get("knowledge_base_ids") or []
-            kb_ids = [client.resolve_kb_id(k) for k in raw_kb_ids] if raw_kb_ids else None
+            kb_ids = (
+                [client.resolve_kb_id(k) for k in raw_kb_ids] if raw_kb_ids else None
+            )
             # Pre-check: if no KB IDs provided, inspect agent config to detect
             # kb_selection_mode=none/selected-empty so we fail fast with a clear message
             # instead of the cryptic backend error "no search targets available".
@@ -1244,10 +1561,12 @@ async def handle_call_tool(
                     mode = cfg.get("kb_selection_mode", "selected")
                     built_in_kbs = cfg.get("knowledge_bases") or []
                     # If mode=none or (mode=selected and no built-in KBs), agent requires explicit KB selection
-                    needs_kbs = (mode == "none") or (mode in ("selected", "") and not built_in_kbs)
+                    needs_kbs = (mode == "none") or (
+                        mode in ("selected", "") and not built_in_kbs
+                    )
                     if needs_kbs:
                         kb_list = client.list_knowledge_bases()
-                        kbs = (kb_list.get("data") or kb_list)
+                        kbs = kb_list.get("data") or kb_list
                         if isinstance(kbs, dict):
                             kbs = kbs.get("list", kbs.get("items", []))
                         kb_summary = ", ".join(
@@ -1263,7 +1582,11 @@ async def handle_call_tool(
                 except ValueError:
                     raise
                 except Exception as preflight_err:
-                    logger.warning(f"agent_chat preflight KB check failed (non-fatal): {preflight_err}")
+                    logger.warning(
+                        f"agent_chat preflight KB check failed (non-fatal): {preflight_err}"
+                    )
+            # Resolve folder/tag name scopes to IDs across all provided KBs
+            folder_ids, tag_ids = _resolve_scope_names(args, kb_ids or [])
             fn = functools.partial(
                 client.agent_chat,
                 args["session_id"],
@@ -1272,6 +1595,9 @@ async def handle_call_tool(
                 knowledge_base_ids=kb_ids,
                 web_search_enabled=args.get("web_search_enabled", False),
                 enable_memory=args.get("enable_memory", False),
+                folder_ids=folder_ids or None,
+                tag_ids=tag_ids or None,
+                include_subfolders=args.get("include_subfolders", False),
             )
             result = await asyncio.get_running_loop().run_in_executor(None, fn)
 
@@ -1301,9 +1627,7 @@ async def handle_call_tool(
         elif name == "wiki_read_page":
             result = client.wiki_read_page(args["kb_id"], args["slug"])
         elif name == "wiki_index_view":
-            result = client.wiki_index_view(
-                args["kb_id"], args.get("limit", 50)
-            )
+            result = client.wiki_index_view(args["kb_id"], args.get("limit", 50))
 
         else:
             # Handle unknown tool names

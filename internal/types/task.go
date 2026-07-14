@@ -306,6 +306,7 @@ type QuestionGenerationPayload struct {
 	TenantID        uint64 `json:"tenant_id"`
 	KnowledgeBaseID string `json:"knowledge_base_id"`
 	KnowledgeID     string `json:"knowledge_id"`
+	FolderID        string `json:"folder_id,omitempty"` // Folder ID for vector-store-level metadata filtering (empty = root)
 	QuestionCount   int    `json:"question_count"`
 	// Language is the request locale (e.g. zh-CN, en-US) when the task was enqueued, used for {{language}} / {{lang}} in templates.
 	Language string `json:"language,omitempty"`
@@ -453,9 +454,10 @@ type ImageMultimodalPayload struct {
 	TenantID        uint64 `json:"tenant_id"`
 	KnowledgeID     string `json:"knowledge_id"`
 	KnowledgeBaseID string `json:"knowledge_base_id"`
-	ChunkID         string `json:"chunk_id"`         // parent text chunk
-	ImageURL        string `json:"image_url"`        // provider:// URL (e.g. local://..., minio://...)
-	ImageLocalPath  string `json:"image_local_path"` // deprecated: kept for backward compat with in-flight tasks
+	FolderID        string `json:"folder_id,omitempty"` // Folder ID for vector-store-level metadata filtering (empty = root)
+	ChunkID         string `json:"chunk_id"`            // parent text chunk
+	ImageURL        string `json:"image_url"`           // provider:// URL (e.g. local://..., minio://...)
+	ImageLocalPath  string `json:"image_local_path"`    // deprecated: kept for backward compat with in-flight tasks
 	EnableOCR       bool   `json:"enable_ocr"`
 	EnableCaption   bool   `json:"enable_caption"`
 	Language        string `json:"language,omitempty"`          // Request locale for {{language}} in prompt templates
@@ -488,6 +490,7 @@ type ParentSummaryGenerationPayload struct {
 	TenantID        uint64   `json:"tenant_id"`
 	KnowledgeBaseID string   `json:"knowledge_base_id"`
 	KnowledgeID     string   `json:"knowledge_id"`
+	FolderID        string   `json:"folder_id,omitempty"`   // Folder ID for vector-store-level metadata filtering (empty = root)
 	Language        string   `json:"language,omitempty"`    // Request locale for {{language}} in prompt templates
 	ParentChunkIDs  []string `json:"parent_chunk_ids"`      // Batch of parent chunks to generate summaries for
 	Attempt         int      `json:"attempt,omitempty"`     // Links this task to the parent parse attempt

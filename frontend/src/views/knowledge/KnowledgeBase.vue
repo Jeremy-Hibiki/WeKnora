@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch, reactive, computed, nextTick } from "vue";
-import { MessagePlugin } from "tdesign-vue-next";
+import { MessagePlugin, DialogPlugin } from "tdesign-vue-next";
 import DocContent from "@/components/doc-content.vue";
 import useKnowledgeBase from '@/hooks/useKnowledgeBase';
 import { useRoute, useRouter } from 'vue-router';
@@ -28,6 +28,8 @@ import {
   listKnowledgeTags,
   updateKnowledgeTagBatch,
   uploadKnowledgeFile,
+  uploadKnowledgeFolder,
+  uploadKnowledgeZip,
   createKnowledgeFromURL,
   reparseKnowledge,
   cancelKnowledgeParse,
@@ -35,12 +37,16 @@ import {
   batchReparseKnowledge,
   getKnowledgeSpans,
   getKnowledgeDetails,
+  type FolderUploadResult,
 } from "@/api/knowledge-base/index";
+import { createFolder } from "@/api/knowledge-folder";
 import { knowledgeSpansPayloadHasTrace } from '@/utils/knowledgeTrace';
 import FAQEntryManager from './components/FAQEntryManager.vue';
 import DocumentListView from './components/DocumentListView.vue';
 import DocumentCardView from './components/DocumentCardView.vue';
 import DocumentBatchBar from './components/DocumentBatchBar.vue';
+import IconButton from '@/components/IconButton.vue';
+import IconButtonGroup from '@/components/IconButtonGroup.vue';
 import KbUploadSourceDropdown from './components/KbUploadSourceDropdown.vue';
 import TagEditDialog from './components/TagEditDialog.vue';
 import KbTagManageDrawer from './components/KbTagManageDrawer.vue';
@@ -53,7 +59,13 @@ import {
   knowledgeNeedsStatusPolling,
   shouldRefreshWikiStatusAfterKnowledgePoll,
 } from './wikiStatusRefresh';
-import { listMoveTargets, moveKnowledge, getKnowledgeMoveProgress } from '@/api/knowledge-base';
+import { getKnowledgeMoveProgress } from '@/api/knowledge-base';
+import { batchMoveKnowledgeToFolder, moveFolder } from '@/api/knowledge-folder';
+import FolderManageDialog from '@/views/knowledge/components/FolderManageDialog.vue';
+import MoveKnowledgeDialog from '@/views/knowledge/components/MoveKnowledgeDialog.vue';
+import FolderSelector from '@/views/knowledge/components/FolderSelector.vue';
+import { useKnowledgeFolder } from '@/composables/useKnowledgeFolder';
+import type { KnowledgeFolder } from '@/types/knowledgeFolder';
 import { useI18n } from 'vue-i18n';
 import { useMarqueeSelect } from '@/hooks/useMarqueeSelect';
 import type { ParserEngineInfo } from '@/api/system';
@@ -309,9 +321,6 @@ const showKbDetailContextualGuide = computed(() => {
 
 const onVisibleChange = (visible: boolean) => {
   _onVisibleChange(visible);
-  if (!visible) {
-    moveMenuMode.value = 'normal';
-  }
 };
 
 /** Per-knowledge cache: whether /spans has a real trace (see knowledgeSpansPayloadHasTrace). */
@@ -373,15 +382,31 @@ let pageSize = 35;
 let scrollLoading = false;
 const resetPage = () => { page = 1; scrollLoading = false; };
 
-// Move state — inline in card menu
+// Move state — driven by dialogs (MoveKnowledgeDialog for KB move,
+// FolderSelector for folder move), so it works in both grid and list views.
+const moveKbDialogVisible = ref(false);
+const moveKbDialogIds = ref<string[]>([]);
+// Move-knowledge-to-folder state
+const moveFolderDialogVisible = ref(false);
+const moveFolderKnowledgeIds = ref<string[]>([]);
+// Move-folder-to-folder state
+const folderMoveDialogVisible = ref(false);
+const folderToMove = ref<KnowledgeFolder | null>(null);
+// Move sub-flow state used by DocumentCardView/DocumentListView inline menus.
 const moveMenuMode = ref<'normal' | 'targets' | 'confirm'>('normal');
-const moveKnowledgeId = ref('');
 const moveTargetKbs = ref<any[]>([]);
 const moveTargetsLoading = ref(false);
-const moveSelectedTargetId = ref('');
 const moveSelectedTargetName = ref('');
 const moveMode = ref<'reuse_vectors' | 'reparse'>('reuse_vectors');
 const moveSubmitting = ref(false);
+// Batch move state: folders + knowledge IDs to move together.
+const batchMoveFolders = ref<KnowledgeFolder[]>([]);
+const batchMoveKnowledgeIds = ref<string[]>([]);
+// Disabled folder IDs for the move-folder dialog.
+const folderMoveDisabledIds = computed(() => {
+  if (folderToMove.value) return [folderToMove.value.id];
+  return batchMoveFolders.value.map((f) => f.id);
+});
 let movePollTimer: ReturnType<typeof setInterval> | null = null;
 
 // View mode (grid / list) — persisted per browser
@@ -501,6 +526,10 @@ const tagTotal = ref(0);
 let tagSearchDebounce: number | null = null;
 let docSearchDebounce: number | null = null;
 const docSearchKeyword = ref('');
+// When true, the document keyword search is scoped to the current folder
+// (sends folder_scope = currentFolderId). Only meaningful while browsing
+// inside a folder; auto-resets when the user navigates away.
+const searchInFolder = ref(false);
 const selectedFileType = ref('');
 const fileTypeOptions = computed(() => [
   { label: t('knowledgeBase.allFileTypes'), value: '' },
@@ -552,8 +581,110 @@ const sourceOptions = computed(() => [
 const updatedTimeRange = ref<string[]>([]);
 // Disable any date after today so users cannot filter into the future.
 const disableFutureDate = { after: new Date(new Date().setHours(23, 59, 59, 999)) };
+// Folder state
+const {
+  currentFolderId,
+  folders,
+  breadcrumbPath,
+  folderTree,
+  foldersLoading,
+  treeLoading,
+  currentFolderPath,
+  navigateToFolder,
+  loadFolderTree,
+  loadFolders,
+  handleDeleteFolder,
+} = useKnowledgeFolder(kbId);
+
+// Folder management dialog state
+const folderDialogVisible = ref(false);
+const folderDialogMode = ref<'create' | 'edit'>('create');
+const currentEditFolder = ref<KnowledgeFolder | null>(null);
+
+// Load folders when kbId or currentFolderId changes
+watch([kbId, currentFolderId], ([newKbId, newFolderId]) => {
+  if (newKbId) {
+    loadFolders(newFolderId);
+    loadFolderTree();
+  }
+}, { immediate: true });
+
+// Reload files when folder changes
+watch(currentFolderId, (newFolderId) => {
+  // 'Search in this folder' only applies while browsing inside a folder;
+  // reset it when leaving to root so folder_scope is omitted (null) again.
+  if (!newFolderId) {
+    searchInFolder.value = false;
+  }
+  resetPage();
+  loadKnowledgeFiles(kbId.value);
+});
+
+const handleFolderNavigate = async (folderId: string | null) => {
+  await navigateToFolder(folderId);
+};
+
+const handleCreateFolder = () => {
+  folderDialogMode.value = 'create';
+  currentEditFolder.value = null;
+  folderDialogVisible.value = true;
+};
+const handleRenameFolder = (folder: KnowledgeFolder) => {
+  folderDialogMode.value = 'edit';
+  currentEditFolder.value = folder;
+  folderDialogVisible.value = true;
+};
+
+const confirmDeleteFolder = (folder: KnowledgeFolder) => {
+  const name = folder.name || '';
+  const count = folder.knowledge_count || 0;
+  const msg = count > 0
+    ? t('knowledgeFolder.confirmDeleteFolderWithContent', { name, count })
+    : t('knowledgeFolder.confirmDeleteFolder', { name });
+  const dialog = DialogPlugin.confirm({
+    header: t('knowledgeFolder.deleteFolder'),
+    body: msg,
+    confirmBtn: { content: t('common.confirm'), theme: 'danger' },
+    cancelBtn: t('common.cancel'),
+    onConfirm: async () => {
+      dialog.update({ confirmLoading: true });
+      const ok = await handleDeleteFolder(folder.id, count > 0);
+      dialog.destroy();
+      if (ok) {
+        loadKnowledgeFiles(kbId.value);
+        loadFolders(currentFolderId.value);
+        loadFolderTree();
+      }
+    },
+  });
+};
+
+const handleFolderDialogSuccess = () => {
+  loadFolders(currentFolderId.value);
+  loadFolderTree();
+};
+
+// Prepend folder items to cardList for display
+const folderCardItems = computed(() => {
+  return folders.value.map((f) => ({
+    ...f,
+    id: f.id,
+    file_name: f.name,
+    type: 'folder',
+    isFolder: true,
+    knowledge_count: f.knowledge_count || 0,
+    created_at: f.created_at,
+    updated_at: f.updated_at || f.created_at,
+  }));
+});
+
+const displayCardList = computed(() => {
+  return [...folderCardItems.value, ...cardList.value];
+});
+
 const filterParams = computed(() => {
   const [start, end] = updatedTimeRange.value || [];
+  const inFolder = currentFolderId.value;
   return {
     tag_ids: selectedTagIds.value.length > 0 ? selectedTagIds.value.join(',') : undefined,
     keyword: docSearchKeyword.value ? docSearchKeyword.value.trim() : undefined,
@@ -562,6 +693,11 @@ const filterParams = computed(() => {
     source: selectedSource.value || undefined,
     start_time: start ? `${start} 00:00:00` : undefined,
     end_time: end ? `${end} 23:59:59` : undefined,
+    folder_id: inFolder || '__root__',
+    // folder_scope is only sent when the user opts in to searching within the
+    // current folder; the backend then restricts keyword/vector recall to
+    // this folder (and its descendants) instead of the whole KB.
+    folder_scope: searchInFolder.value && inFolder ? inFolder : undefined,
   };
 });
 const tagMap = computed<Record<string, any>>(() => {
@@ -1070,6 +1206,16 @@ const handleOpenKnowledgeEvent = (e: Event) => {
   tryAutoOpenDocument();
 };
 
+const handleFolderDropEvent = async (event: Event) => {
+  if (!ensureDocumentKbReady()) return;
+  const detail = (event as CustomEvent<{ files: File[] }>).detail;
+  const files = detail?.files ?? [];
+  if (files.length === 0) return;
+  // Route through the upload-confirm dialog so the user can pick process
+  // options, then executeFolderUploadBatch handles the batch endpoint.
+  openUploadConfirmDialog(files);
+};
+
 onMounted(() => {
   loadKnowledgeList();
   editorResources.ensureParserEngines();
@@ -1077,12 +1223,14 @@ onMounted(() => {
   window.addEventListener('knowledgeFileUploaded', handleFileUploaded as EventListener);
   window.addEventListener('openURLImportDialog', handleOpenURLImportDialog as EventListener);
   window.addEventListener('weknora:open-knowledge', handleOpenKnowledgeEvent as EventListener);
+  window.addEventListener('weknora:folder-drop', handleFolderDropEvent as EventListener);
 });
 
 onUnmounted(() => {
   window.removeEventListener('knowledgeFileUploaded', handleFileUploaded as EventListener);
   window.removeEventListener('openURLImportDialog', handleOpenURLImportDialog as EventListener);
   window.removeEventListener('weknora:open-knowledge', handleOpenKnowledgeEvent as EventListener);
+  window.removeEventListener('weknora:folder-drop', handleFolderDropEvent as EventListener);
   stopMovePoll();
   if (timeout !== null) {
     clearTimeout(timeout);
@@ -1251,62 +1399,151 @@ const onReparseMenuClick = (index: number, item: KnowledgeCard) => {
   }
 };
 
-const handleMoveKnowledge = async (item: KnowledgeCard) => {
-  moveKnowledgeId.value = item.id;
-  moveMenuMode.value = 'targets';
-  moveTargetsLoading.value = true;
-  moveTargetKbs.value = [];
-  try {
-    const res: any = await listMoveTargets(kbId.value);
-    moveTargetKbs.value = res.data || [];
-  } catch {
-    moveTargetKbs.value = [];
-  } finally {
-    moveTargetsLoading.value = false;
-  }
+// Open the move-to-KB dialog for a single document. Works for both grid and
+// list views because the target selection lives in a dialog, not an inline
+// submenu that only the grid popup renders.
+const handleMoveKnowledge = (item: KnowledgeCard) => {
+  item.isMore = false; // close the grid card popup so it doesn't sit behind the dialog
+  moveKbDialogIds.value = [item.id];
+  moveKbDialogVisible.value = true;
 };
 
-const handleMoveSelectTarget = (kb: any) => {
-  moveSelectedTargetId.value = kb.id;
-  moveSelectedTargetName.value = kb.name;
-  moveMode.value = 'reuse_vectors';
-  moveMenuMode.value = 'confirm';
+// Open the move-to-folder dialog for a single document.
+const handleMoveToFolder = (item: KnowledgeCard) => {
+  item.isMore = false;
+  moveFolderKnowledgeIds.value = [item.id];
+  moveFolderDialogVisible.value = true;
 };
 
-const handleMoveBack = () => {
-  if (moveMenuMode.value === 'confirm') {
-    moveMenuMode.value = 'targets';
-  } else {
-    moveMenuMode.value = 'normal';
-  }
-};
-
-const handleMoveConfirm = async () => {
-  if (!moveSelectedTargetId.value || moveSubmitting.value) return;
-  moveSubmitting.value = true;
-  try {
-    const res: any = await moveKnowledge({
-      knowledge_ids: [moveKnowledgeId.value],
-      source_kb_id: kbId.value,
-      target_kb_id: moveSelectedTargetId.value,
-      mode: moveMode.value,
-    });
-    const taskId = res.data?.task_id;
-    MessagePlugin.info(t('knowledgeBase.moveStarted'));
-    // Close the card menu
-    moveMenuMode.value = 'normal';
-    cardList.value.forEach(c => { c.isMore = false; });
-
-    if (taskId) {
-      startMovePoll(taskId);
-    } else {
-      moveSubmitting.value = false;
-      resetPage(); // Reset page counter when reloading files after move
-      loadKnowledgeFiles(kbId.value);
+// Batch move-to-folder: selected documents and folders in batch mode.
+const handleBatchMoveToFolder = () => {
+  const ids = [...selectedIds.value];
+  if (ids.length === 0) return;
+  // Separate folders and knowledge entries - search displayCardList (includes both folders and knowledge).
+  const foldersToMove: KnowledgeFolder[] = [];
+  const knowledgeIds: string[] = [];
+  for (const id of ids) {
+    const item = displayCardList.value.find((c: KnowledgeCard) => c.id === id);
+    if (item) {
+      if ((item as any).isFolder) {
+        foldersToMove.push(item as unknown as KnowledgeFolder);
+      } else {
+        knowledgeIds.push(id);
+      }
     }
-  } catch (e: any) {
-    MessagePlugin.error(e?.message || t('knowledgeBase.moveFailed'));
-    moveSubmitting.value = false;
+  }
+  console.log('[BatchMove] selected:', ids.length, 'folders:', foldersToMove.length, 'knowledge:', knowledgeIds.length, 'cardList:', cardList.value.length);
+  // Unified: open folder selector, move both folders and knowledge entries.
+  batchMoveFolders.value = foldersToMove;
+  batchMoveKnowledgeIds.value = knowledgeIds;
+  loadFolderTree();
+  folderMoveDialogVisible.value = true;
+};
+
+// Move sub-flow handlers for the inline card/list menu. The actual KB move is
+// handled by MoveKnowledgeDialog via handleMoveKnowledge, so these just reset
+// the inline menu state back to normal.
+const handleMoveSelectTarget = (_kb: any) => {
+  moveMenuMode.value = 'normal';
+};
+const handleMoveBack = () => {
+  moveMenuMode.value = 'normal';
+};
+const handleMoveConfirm = () => {
+  moveSubmitting.value = false;
+  moveMenuMode.value = 'normal';
+};
+
+// Refresh knowledge files and folder tree
+const handleRefresh = async () => {
+  resetPage();
+  await loadKnowledgeFiles(kbId.value);
+  loadFolders(currentFolderId.value);
+  loadFolderTree();
+};
+
+// Confirm move-to-folder: batch-move knowledge entries.
+const handleMoveFolderConfirm = async (targetFolderId: string | null) => {
+  if (moveFolderKnowledgeIds.value.length === 0) {
+    return;
+  }
+  const ids = moveFolderKnowledgeIds.value;
+  moveFolderKnowledgeIds.value = [];
+  try {
+    await batchMoveKnowledgeToFolder({ knowledge_ids: ids, folder_id: targetFolderId });
+    MessagePlugin.success(t('knowledgeBase.moveToFolderSuccess'));
+    handleRefresh();
+  } catch (err) {
+    const message = (err as { message?: string })?.message || t('knowledgeBase.moveToFolderFailed');
+    MessagePlugin.error(message);
+  }
+};
+
+// Open the move-folder dialog for a single folder (grid / list views).
+const handleMoveFolder = (folder: KnowledgeFolder) => {
+  folderToMove.value = folder;
+  loadFolderTree();
+  folderMoveDialogVisible.value = true;
+};
+
+// Confirm move-folder: move the folder itself or batch-move multiple folders.
+const handleConfirmFolderMove = async (targetFolderId: string | null) => {
+  console.log('[ConfirmFolderMove] targetFolderId:', targetFolderId, 'folderToMove:', folderToMove.value?.id, 'batchMoveFolders:', batchMoveFolders.value.length, 'batchMoveKnowledgeIds:', batchMoveKnowledgeIds.value.length);
+  if (folderToMove.value) {
+    // Single folder move.
+    const folder = folderToMove.value;
+    folderToMove.value = null;
+    try {
+      await moveFolder(kbId.value, folder.id, { target_parent_folder_id: targetFolderId });
+      MessagePlugin.success(t('knowledgeBase.moveToFolderSuccess'));
+      handleRefresh();
+    } catch (err) {
+      const message = (err as { message?: string })?.message || t('knowledgeBase.moveToFolderFailed');
+      MessagePlugin.error(message);
+    }
+    return;
+  }
+  // Multiple folders batch move.
+  if (batchMoveFolders.value.length > 0) {
+    const folders = batchMoveFolders.value;
+    batchMoveFolders.value = [];
+    try {
+      for (const folder of folders) {
+        await moveFolder(kbId.value, folder.id, { target_parent_folder_id: targetFolderId });
+      }
+      // Also move knowledge entries if any.
+      if (batchMoveKnowledgeIds.value.length > 0) {
+        await batchMoveKnowledgeToFolder({ knowledge_ids: batchMoveKnowledgeIds.value, folder_id: targetFolderId });
+        batchMoveKnowledgeIds.value = [];
+      }
+      MessagePlugin.success(t('knowledgeBase.moveToFolderSuccess'));
+      handleRefresh();
+    } catch (err) {
+      const message = (err as { message?: string })?.message || t('knowledgeBase.moveToFolderFailed');
+      MessagePlugin.error(message);
+    }
+  } else if (batchMoveKnowledgeIds.value.length > 0) {
+    // Only knowledge entries selected, no folders.
+    const ids = batchMoveKnowledgeIds.value;
+    batchMoveKnowledgeIds.value = [];
+    try {
+      await batchMoveKnowledgeToFolder({ knowledge_ids: ids, folder_id: targetFolderId });
+      MessagePlugin.success(t('knowledgeBase.moveToFolderSuccess'));
+      handleRefresh();
+    } catch (err) {
+      const message = (err as { message?: string })?.message || t('knowledgeBase.moveToFolderFailed');
+      MessagePlugin.error(message);
+    }
+  }
+};
+
+// Move-to-KB dialog confirmed: poll progress if async.
+const handleMoveKbDialogMoved = (taskId?: string) => {
+  if (taskId) {
+    startMovePoll(taskId);
+  } else {
+    resetPage();
+    loadKnowledgeFiles(kbId.value);
   }
 };
 
@@ -1319,7 +1556,6 @@ const startMovePoll = (taskId: string) => {
       if (!data) return;
       if (data.status === 'completed') {
         stopMovePoll();
-        moveSubmitting.value = false;
         const failed = data.failed || 0;
         if (failed > 0) {
           MessagePlugin.warning(t('knowledgeBase.moveCompletedWithErrors', { success: (data.processed || 0) - failed, failed }));
@@ -1330,7 +1566,6 @@ const startMovePoll = (taskId: string) => {
         loadKnowledgeFiles(kbId.value);
       } else if (data.status === 'failed') {
         stopMovePoll();
-        moveSubmitting.value = false;
         MessagePlugin.error(t('knowledgeBase.moveFailed'));
       }
     } catch {
@@ -1393,15 +1628,6 @@ const AUDIO_EXTENSIONS = ['mp3', 'wav', 'm4a', 'flac', 'ogg'];
 
 const uploadConfirmStore = useUploadConfirmStore();
 
-const getFolderUploadFileName = (file: File) => {
-  const relativePath = (file as any).webkitRelativePath;
-  if (!relativePath) return undefined;
-  const pathParts = relativePath.split('/');
-  if (pathParts.length <= 2) return undefined;
-  const subPath = pathParts.slice(1, -1).join('/');
-  return `${subPath}/${file.name}`;
-};
-
 const showUploadResultMessages = (
   successCount: number,
   failCount: number,
@@ -1435,9 +1661,159 @@ const showUploadResultMessages = (
   }
 };
 
+/**
+ * Build KB folder structure from uploaded folder paths.
+ * Maps each webkitRelativePath prefix to its KB folder_id.
+ */
+const buildFolderStructure = async (
+  files: File[],
+  targetKbId: string,
+  baseParentId: string | null,
+): Promise<Map<string, string>> => {
+  const pathToId = new Map<string, string>();
+  // Collect unique folder paths (all intermediate directory prefixes)
+  const folderPaths = new Set<string>();
+  for (const file of files) {
+    const rp = (file as any).webkitRelativePath as string | undefined;
+    if (!rp) continue;
+    const parts = rp.split('/');
+    // parts[0] is the top-level folder name; collect all deeper prefixes
+    for (let i = 1; i < parts.length; i++) {
+      folderPaths.add(parts.slice(0, i).join('/'));
+    }
+  }
+  if (folderPaths.size === 0) return pathToId;
+
+  // Sort by depth so parents are created before children
+  const sorted = Array.from(folderPaths).sort((a, b) => a.split('/').length - b.split('/').length);
+
+  for (const folderPath of sorted) {
+    try {
+      const parts = folderPath.split('/');
+      const folderName = parts[parts.length - 1];
+      let parentId = baseParentId;
+      if (parts.length > 1) {
+        const parentPath = parts.slice(0, -1).join('/');
+        parentId = pathToId.get(parentPath) || baseParentId;
+      }
+      const created = (await createFolder(targetKbId, {
+        name: folderName,
+        parent_folder_id: parentId,
+      })) as { id?: string } | undefined;
+      if (created?.id) {
+        pathToId.set(folderPath, created.id);
+      }
+    } catch {
+      // Folder may already exist; try listing to find it
+      // If creation fails, files go to base parent
+    }
+  }
+  return pathToId;
+};
+
+// Typed accessor for the non-standard `webkitRelativePath` property set by the
+// browser when a folder is selected via <input webkitdirectory>.
+const relativePathOf = (file: File): string | undefined => {
+  const rp = (file as File & { webkitRelativePath?: unknown }).webkitRelativePath;
+  return typeof rp === 'string' && rp.length > 0 ? rp : undefined;
+};
+
+// Upload a whole folder via the batch endpoint. The server builds the folder
+// tree atomically and returns a skip/error summary. Returns the same shape as
+// executeUploadBatch so callers (progress UI, refresh) are unchanged.
+const executeFolderUploadBatch = async (
+  files: File[],
+  options: { processConfig?: KnowledgeProcessOverrides; folderId?: string | null } = {},
+): Promise<{ successCount: number; failCount: number }> => {
+  const targetKbId = kbId.value;
+  if (!targetKbId || files.length === 0) {
+    return { successCount: 0, failCount: files.length };
+  }
+
+  const paths = files.map(relativePathOf).map((p) => p ?? '');
+  MessagePlugin.info(t('knowledgeBase.uploadingFolder', { total: files.length }));
+
+  try {
+    const result: FolderUploadResult = await uploadKnowledgeFolder(
+      targetKbId,
+      files,
+      paths,
+      {
+        root_folder_id: options.folderId ?? undefined,
+        tag_ids: selectedTagIds.value.length > 0 ? [...selectedTagIds.value] : undefined,
+        process_config: options.processConfig,
+      },
+    );
+    const successCount = result.uploaded_files ?? 0;
+    const failCount = (result.errors?.length ?? 0) + (result.skipped_files ?? 0);
+
+    if (successCount > 0) {
+      window.dispatchEvent(new CustomEvent('knowledgeFileUploaded', { detail: { kbId: targetKbId } }));
+    }
+
+    // Surface the skip/error summary so the user understands what happened.
+    if (result.skipped_files > 0 || (result.errors?.length ?? 0) > 0) {
+      MessagePlugin.warning(
+        t('knowledgeBase.folderUploadPartial', {
+          uploaded: successCount,
+          skipped: result.skipped_files,
+          errors: result.errors?.length ?? 0,
+        }),
+      );
+    } else {
+      MessagePlugin.success(t('knowledgeBase.uploadAllSuccess', { count: successCount }));
+    }
+    return { successCount, failCount };
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : t('knowledgeBase.uploadFailed');
+    MessagePlugin.error(message);
+    return { successCount: 0, failCount: files.length };
+  }
+};
+
+// Upload a single .zip archive; the server extracts and rebuilds the tree.
+const executeZipUpload = async (
+  zipFile: File,
+  options: { processConfig?: KnowledgeProcessOverrides; folderId?: string | null } = {},
+): Promise<{ successCount: number; failCount: number }> => {
+  const targetKbId = kbId.value;
+  if (!targetKbId) {
+    return { successCount: 0, failCount: 1 };
+  }
+  MessagePlugin.info(t('knowledgeBase.uploadingZip', { name: zipFile.name }));
+  try {
+    const result: FolderUploadResult = await uploadKnowledgeZip(targetKbId, zipFile, {
+      root_folder_id: options.folderId ?? undefined,
+      tag_ids: selectedTagIds.value.length > 0 ? [...selectedTagIds.value] : undefined,
+      process_config: options.processConfig,
+    });
+    const successCount = result.uploaded_files ?? 0;
+    const failCount = (result.errors?.length ?? 0) + (result.skipped_files ?? 0);
+    if (successCount > 0) {
+      window.dispatchEvent(new CustomEvent('knowledgeFileUploaded', { detail: { kbId: targetKbId } }));
+    }
+    if (result.skipped_files > 0 || (result.errors?.length ?? 0) > 0) {
+      MessagePlugin.warning(
+        t('knowledgeBase.folderUploadPartial', {
+          uploaded: successCount,
+          skipped: result.skipped_files,
+          errors: result.errors?.length ?? 0,
+        }),
+      );
+    } else {
+      MessagePlugin.success(t('knowledgeBase.uploadAllSuccess', { count: successCount }));
+    }
+    return { successCount, failCount };
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : t('knowledgeBase.uploadFailed');
+    MessagePlugin.error(message);
+    return { successCount: 0, failCount: 1 };
+  }
+};
+
 const executeUploadBatch = async (
   files: File[],
-  options: { processConfig?: KnowledgeProcessOverrides; tagIds?: string[] } = {},
+  options: { processConfig?: KnowledgeProcessOverrides; tagIds?: string[]; folderId?: string | null } = {},
 ) => {
   const targetKbId = kbId.value;
   if (!targetKbId || files.length === 0) {
@@ -1451,9 +1827,16 @@ const executeUploadBatch = async (
   let failCount = 0;
   const totalCount = files.length;
   const hasFolderPaths = files.some((file) => {
-    const relativePath = (file as File & { webkitRelativePath?: string }).webkitRelativePath;
-    return !!relativePath && relativePath.split('/').length > 2;
+    const relativePath = relativePathOf(file);
+    return !!relativePath && relativePath.split('/').length > 1;
   });
+
+  // Folder uploads go through the atomic batch endpoint (server builds the
+  // tree and dedupes in one transaction); flat-file uploads keep the
+  // per-file path below.
+  if (hasFolderPaths) {
+    return executeFolderUploadBatch(files, options);
+  }
 
   for (const file of files) {
     try {
@@ -1461,16 +1844,34 @@ const executeUploadBatch = async (
         file: File
         tag_ids?: string[]
         fileName?: string
+        folder_id?: string
         process_config?: KnowledgeProcessOverrides
       } = { file, tag_ids: tagIdsToUpload };
 
-      const fileName = getFolderUploadFileName(file);
-      if (fileName) uploadData.fileName = fileName;
+      // Determine which KB folder this file belongs to
+      const relativePath = relativePathOf(file);
+      if (relativePath) {
+        const parts = relativePath.split('/');
+        if (parts.length > 1) {
+          // File is inside a subfolder — folder creation is handled by the
+          // batch endpoint above; this branch only runs for flat uploads.
+          uploadData.fileName = parts[parts.length - 1];
+        }
+      } else if (options.folderId) {
+        uploadData.folder_id = options.folderId;
+      }
+
       if (options.processConfig) {
         uploadData.process_config = options.processConfig;
       }
 
-      const responseData: any = await uploadKnowledgeFile(targetKbId, uploadData);
+      const responseData = (await uploadKnowledgeFile(targetKbId, uploadData)) as unknown as {
+        success?: boolean;
+        code?: number | string;
+        status?: string;
+        message?: string;
+        error?: { message?: string; code?: string };
+      };
       const isSuccess = responseData?.success || responseData?.code === 200 || responseData?.status === 'success' || (!responseData?.error && responseData);
       if (isSuccess) {
         successCount++;
@@ -1489,11 +1890,12 @@ const executeUploadBatch = async (
           MessagePlugin.error(errorMessage);
         }
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       failCount++;
       if (totalCount === 1) {
-        let errorMessage = error?.error?.message || error?.message || t('knowledgeBase.uploadFailed');
-        if (error?.code === 'duplicate_file') {
+        const err = error as { error?: { message?: string }; message?: string; code?: string };
+        let errorMessage = err?.error?.message || err?.message || t('knowledgeBase.uploadFailed');
+        if (err?.code === 'duplicate_file') {
           errorMessage = t('knowledgeBase.fileExists');
         }
         MessagePlugin.error(errorMessage);
@@ -1507,11 +1909,12 @@ const executeUploadBatch = async (
     }));
   }
 
-  showUploadResultMessages(successCount, failCount, totalCount, hasFolderPaths ? 'folder' : 'document');
+  // Flat-file path only — folder uploads short-circuit earlier.
+  showUploadResultMessages(successCount, failCount, totalCount, 'document');
   return { successCount, failCount };
 };
 
-const executeUrlImport = async (url: string, processConfig?: KnowledgeProcessOverrides, tagIds?: string[]) => {
+const executeUrlImport = async (url: string, processConfig?: KnowledgeProcessOverrides, tagIds?: string[], folderId?: string | null) => {
   const targetKbId = kbId.value;
   if (!targetKbId) {
     MessagePlugin.error(t('error.missingKbId'));
@@ -1522,11 +1925,15 @@ const executeUrlImport = async (url: string, processConfig?: KnowledgeProcessOve
     ? tagIds
     : (selectedTagIds.value.length > 0 ? [...selectedTagIds.value] : undefined);
   try {
-    const responseData: any = await createKnowledgeFromURL(targetKbId, {
+    const urlData: { url: string; enable_multimodel?: boolean; tag_ids?: string[]; folder_id?: string; process_config?: KnowledgeProcessOverrides } = {
       url,
       tag_ids: tagIdsToUpload,
       process_config: processConfig,
-    });
+    };
+    if (folderId) {
+      urlData.folder_id = folderId;
+    }
+    const responseData: any = await createKnowledgeFromURL(targetKbId, urlData);
     window.dispatchEvent(new CustomEvent('knowledgeFileUploaded', {
       detail: { kbId: targetKbId },
     }));
@@ -1545,9 +1952,10 @@ const executeUrlImport = async (url: string, processConfig?: KnowledgeProcessOve
       }
       MessagePlugin.error(errorMessage);
     }
-  } catch (error: any) {
-    let errorMessage = error?.error?.message || error?.message || t('knowledgeBase.urlImportFailed');
-    if (error?.code === 'duplicate_url') {
+  } catch (error: unknown) {
+    const err = error as { error?: { message?: string }; message?: string; code?: string };
+    let errorMessage = err?.error?.message || err?.message || t('knowledgeBase.urlImportFailed');
+    if (err?.code === 'duplicate_url') {
       errorMessage = t('knowledgeBase.urlExists');
     }
     MessagePlugin.error(errorMessage);
@@ -1563,21 +1971,28 @@ const handleUploadConfirmResult = async (result: UploadConfirmResult) => {
   const urls = result.urls || [];
   const processConfig = result.processConfig;
   const tagIds = result.tagIds;
+  const folderId = result.folderId;
 
   if (files.length > 0) {
-    const hasFolderPaths = files.some((file) => {
-      const relativePath = (file as File & { webkitRelativePath?: string }).webkitRelativePath;
-      return !!relativePath && relativePath.split('/').length > 2;
-    });
-    if (hasFolderPaths) {
-      MessagePlugin.info(t('knowledgeBase.uploadingFolder', { total: files.length }));
+    // A single .zip is extracted server-side into a folder tree.
+    if (files.length === 1 && files[0].name.toLowerCase().endsWith('.zip')) {
+      await executeZipUpload(files[0], { processConfig, folderId });
+    } else {
+      await executeUploadBatch(files, { processConfig, tagIds, folderId });
     }
-    await executeUploadBatch(files, { processConfig, tagIds });
   }
 
   for (const url of urls) {
-    await executeUrlImport(url, processConfig, tagIds);
+    await executeUrlImport(url, processConfig, tagIds, folderId);
   }
+
+  // Refresh current directory view
+  resetPage();
+  await loadKnowledgeFiles(kbId.value);
+  loadTags(kbId.value, true);
+  // Refresh folder list in case new folders were created
+  loadFolders(currentFolderId.value);
+  loadFolderTree();
 };
 
 const openUploadConfirmDialog = async (files: File[], urls: string[] = []) => {
@@ -1591,6 +2006,7 @@ const openUploadConfirmDialog = async (files: File[], urls: string[] = []) => {
       urls,
       acceptFileTypes: acceptFileTypes.value,
       supportedFileTypes: [...supportedFileTypes.value],
+      currentFolderId: currentFolderId.value,
     });
     await handleUploadConfirmResult(result);
   } catch {
@@ -1615,6 +2031,7 @@ const handleManualCreate = () => {
     mode: 'create',
     kbId: kbId.value,
     status: 'draft',
+    folderId: currentFolderId.value,
     onSuccess: manualEditorSuccess,
   });
 };
@@ -1768,7 +2185,8 @@ const getDoc = (page: number) => {
 };
 
 const toggleSelectRow = (id: string, checked: boolean, shiftKey?: boolean) => {
-  const items = cardList.value || [];
+  // Use displayCardList which includes both folderCardItems and cardList
+  const items = displayCardList.value;
   const idx = items.findIndex((i: KnowledgeCard) => i.id === id);
   if (shiftKey && lastSelectedIndex >= 0 && idx >= 0) {
     const [s, e] = idx < lastSelectedIndex
@@ -1783,6 +2201,9 @@ const toggleSelectRow = (id: string, checked: boolean, shiftKey?: boolean) => {
     else selectedIds.value.delete(id);
   }
   lastSelectedIndex = idx;
+  if (!checked && selectedIds.value.size === 0) {
+    batchMode.value = false;
+  }
 };
 
 const onCardGridCheckboxChange = (id: string, checked: boolean, ctx?: { e?: Event }) => {
@@ -1791,10 +2212,16 @@ const onCardGridCheckboxChange = (id: string, checked: boolean, ctx?: { e?: Even
 };
 
 const toggleSelectAll = (checked: boolean) => {
-  if (checked) {
-    for (const item of cardList.value || []) selectedIds.value.add(item.id);
-  } else {
-    for (const item of cardList.value || []) selectedIds.value.delete(item.id);
+  // Only select documents, not folders
+  for (const item of cardList.value) {
+    if (checked) {
+      selectedIds.value.add(item.id);
+    } else {
+      selectedIds.value.delete(item.id);
+    }
+  }
+  if (!checked) {
+    batchMode.value = false;
   }
 };
 
@@ -1863,6 +2290,18 @@ const openKnowledgeItem = (item: KnowledgeCard) => {
   openCardDetails(item);
 };
 
+const onCardClick = (item: KnowledgeCard & { isFolder?: boolean }) => {
+  if (batchMode.value) {
+    onCardGridCheckboxChange(item.id, !selectedIds.value.has(item.id));
+    return;
+  }
+  if (item.isFolder) {
+    handleFolderNavigate(item.id);
+    return;
+  }
+  openKnowledgeItem(item);
+};
+
 const confirmBatchDelete = async () => {
   if (batchDeleting.value || batchReparsing.value || selectedIds.value.size === 0) return;
   const ids = Array.from(selectedIds.value);
@@ -1872,10 +2311,20 @@ const confirmBatchDelete = async () => {
     const res: any = await batchDeleteKnowledge(kbId.value, ids);
     if (res?.success) {
       MessagePlugin.success(t('knowledgeBase.batchDeleteSuccess', { count: ids.length }));
+      // If the current folder was deleted, navigate to its parent (or root)
+      if (currentFolderId.value && deletedIdSet.has(currentFolderId.value)) {
+        const bc = breadcrumbPath.value || [];
+        const parentFolderId = bc.length >= 2 ? bc[bc.length - 2]?.id ?? null : null;
+        await navigateToFolder(parentFolderId);
+      }
       clearSelection();
       batchMode.value = false;
       resetPage();
-      // 后端将批量删除放入异步队列，立刻拉列表仍可能包含待删项；短轮询直到列表与后端一致或超时
+      // Reload folders immediately (folders are deleted synchronously on the backend)
+      loadFolders(currentFolderId.value);
+      loadFolderTree();
+      // Backend enqueues knowledge deletion as async task; short-poll until
+      // the list no longer contains the deleted IDs or timeout.
       const maxPolls = 30;
       const delayMs = 400;
       for (let i = 0; i < maxPolls; i++) {
@@ -1908,7 +2357,7 @@ const confirmCancelParseKnowledge = async (item: KnowledgeCard) => {
 
 // Bridge card-view actions back to existing per-card handlers.
 const handleCardAction = (
-  action: 'edit' | 'reparse' | 'cancel-parse' | 'move' | 'delete' | 'view-trace' | 'batch-manage',
+  action: 'edit' | 'reparse' | 'cancel-parse' | 'move' | 'move-folder' | 'delete' | 'view-trace' | 'batch-manage',
   item: KnowledgeCard,
 ) => {
   const idx = (cardList.value || []).findIndex((i: KnowledgeCard) => i.id === item.id);
@@ -1919,6 +2368,7 @@ const handleCardAction = (
   }
   if (action === 'cancel-parse') return confirmCancelParseKnowledge(item);
   if (action === 'move') return handleMoveKnowledge(item);
+  if (action === 'move-folder') return handleMoveToFolder(item);
   if (action === 'delete') return confirmDeleteKnowledge(idx, item);
   if (action === 'view-trace') return handleViewTrace(idx, item);
   if (action === 'batch-manage') return handleEnterBatchFromCard(item);
@@ -1926,14 +2376,28 @@ const handleCardAction = (
 
 // Bridge list-view actions back to existing per-card handlers.
 const handleListAction = (
-  action: 'edit' | 'reparse' | 'cancel-parse' | 'move' | 'delete' | 'view-trace' | 'batch-manage',
-  item: KnowledgeCard,
+  action: 'edit' | 'reparse' | 'cancel-parse' | 'move' | 'move-folder' | 'rename-folder' | 'delete' | 'view-trace' | 'batch-manage',
+  item: KnowledgeCard & { isFolder?: boolean },
 ) => {
+  // Handle folder actions
+  if ((item as any).isFolder) {
+    if (action === 'delete') {
+      confirmDeleteFolder(item as any);
+    }
+    if (action === 'move-folder') {
+      handleMoveFolder(item as any);
+    }
+    if (action === 'rename-folder') {
+      handleRenameFolder(item as any);
+    }
+    return;
+  }
   const idx = (cardList.value || []).findIndex((i: KnowledgeCard) => i.id === item.id);
   if (action === 'edit') return handleManualEdit(idx, item);
   if (action === 'reparse') return confirmRebuildKnowledge(idx, item);
   if (action === 'cancel-parse') return confirmCancelParseKnowledge(item);
   if (action === 'move') return handleMoveKnowledge(item);
+  if (action === 'move-folder') return handleMoveToFolder(item);
   if (action === 'delete') return confirmDeleteKnowledge(idx, item);
   if (action === 'view-trace') return handleViewTrace(idx, item);
   if (action === 'batch-manage') return handleEnterBatchFromCard(item);
@@ -2098,10 +2562,32 @@ async function createNewSession(value: string): Promise<void> {
       </div>
 
       <template v-if="activeKbTab === 'documents' || !isWiki">
+        <!-- Folder breadcrumb: always rendered (v-show) to avoid layout jitter -->
+        <div v-show="!isFAQ" class="folder-breadcrumb-bar">
+          <t-icon name="folder-open" class="folder-breadcrumb-icon" />
+          <button type="button" class="folder-breadcrumb-link" @click="handleFolderNavigate(null)">
+            {{ $t('knowledgeFolder.rootFolder') }}
+          </button>
+          <template v-for="(f, idx) in breadcrumbPath" :key="f.id">
+            <t-icon name="chevron-right" class="folder-breadcrumb-sep" />
+            <button
+              type="button"
+              class="folder-breadcrumb-link"
+              :class="{ current: idx === breadcrumbPath.length - 1 }"
+              @click="handleFolderNavigate(f.id)"
+            >
+              {{ f.name }}
+            </button>
+          </template>
+        </div>
         <div class="knowledge-main">
           <div class="tag-content">
             <div class="doc-card-area">
               <div class="doc-filter-bar">
+                <IconButtonGroup>
+                  <IconButton v-if="canEdit" :icon="'folder-add'" :tooltip="$t('knowledgeFolder.createFolder')" @click="handleCreateFolder" />
+                  <IconButton :icon="'refresh'" :tooltip="$t('knowledgeBase.refresh')" @click="handleRefresh" />
+                </IconButtonGroup>
                 <t-input v-model.trim="docSearchKeyword" :placeholder="$t('knowledgeBase.docSearchPlaceholder')"
                   clearable class="doc-search-input" @clear="loadKnowledgeFiles(kbId)"
                   @enter="loadKnowledgeFiles(kbId)">
@@ -2109,6 +2595,12 @@ async function createNewSession(value: string): Promise<void> {
                     <t-icon name="search" size="16px" />
                   </template>
                 </t-input>
+                <t-checkbox v-if="currentFolderId" v-model="searchInFolder" class="doc-search-in-folder"
+                  :title="$t('knowledgeBase.searchInFolder')"
+                  @change="() => { resetPage(); loadKnowledgeFiles(kbId); }">
+                  <t-icon name="folder" size="14px" style="vertical-align: -2px; margin-right: 2px;" />
+                  {{ $t('knowledgeBase.searchInFolder') }}
+                </t-checkbox>
                 <div class="doc-filter-bar__filters">
                 <t-popup v-model:visible="tagFilterPanelVisible" trigger="click" placement="bottom-left"
                   overlay-class-name="tag-filter-popup" :overlay-inner-style="{ padding: 0 }">
@@ -2255,17 +2747,17 @@ async function createNewSession(value: string): Promise<void> {
                       </button>
                     </t-tooltip>
                   </div>
-                  <div v-if="canEdit" class="doc-filter-actions">
-                    <KbUploadSourceDropdown ref="uploadSourceRef" :accept-file-types="acceptFileTypes"
-                      :supported-file-types="[...supportedFileTypes]" include-manual trigger-icon="file-add"
-                      trigger-class="content-bar-icon-btn" data-guide="kb-detail-add-doc"
-                      :tooltip="t('knowledgeBase.addDocument')" placement="bottom-right" @files="handleUploadSourceFiles"
-                      @url="handleUploadSourceUrl" @manual="handleManualCreate" />
-                  </div>
+                <IconButtonGroup v-if="canEdit" style="margin-left: auto">
+                  <KbUploadSourceDropdown ref="uploadSourceRef" :accept-file-types="acceptFileTypes"
+                    :supported-file-types="[...supportedFileTypes]" include-manual trigger-icon="file-add"
+                    data-guide="kb-detail-add-doc"
+                    :tooltip="t('knowledgeBase.addDocument')" placement="bottom-right" @files="handleUploadSourceFiles"
+                    @url="handleUploadSourceUrl" @manual="handleManualCreate" />
+                </IconButtonGroup>
                 </div>
               </div>
               <div class="doc-scroll-container"
-                :class="{ 'is-empty': !cardList.length && !docListLoading, 'is-marquee-active': docMarqueeVisible }"
+                :class="{ 'is-empty': !displayCardList.length && !docListLoading, 'is-marquee-active': docMarqueeVisible }"
                 ref="knowledgeScroll" @scroll="handleScroll" @mousedown="onDocMarqueeMouseDown">
                 <div v-if="docMarqueeVisible" class="doc-marquee-box"
                   :class="{ 'is-add': docMarqueeMode === 'add', 'is-subtract': docMarqueeMode === 'subtract' }"
@@ -2286,8 +2778,53 @@ async function createNewSession(value: string): Promise<void> {
                     </div>
                   </div>
                 </div>
-                <template v-else-if="cardList.length && viewMode === 'grid'">
-                  <DocumentCardView
+                <template v-else-if="displayCardList.length && viewMode === 'grid'">
+                  <div class="doc-card-list doc-card-list-animated">
+                    <!-- 文件夹卡片 -->
+                    <div v-for="f in folderCardItems" :key="f.id"
+                      class="knowledge-card knowledge-card--folder"
+                      @click="handleFolderNavigate(f.id)">
+                      <div class="card-content">
+                        <div class="card-content-nav">
+                          <t-icon name="folder" size="20px" class="folder-card-icon" />
+                          <span class="card-content-title" :title="f.file_name">{{ f.file_name }}</span>
+                          <t-popup v-if="canEdit" trigger="click" placement="bottom-right" destroy-on-close>
+                            <button type="button" class="folder-card-more" @click.stop>
+                              <t-icon name="more" size="16px" />
+                            </button>
+                            <template #content>
+                              <div class="folder-card-menu">
+                                <div class="folder-card-menu-item" @click.stop="handleRenameFolder(f)">
+                                  <t-icon name="edit" size="16px" />
+                                  <span>{{ $t('knowledgeFolder.renameFolder') }}</span>
+                                </div>
+                                <div class="folder-card-menu-item" @click.stop="handleMoveFolder(f)">
+                                  <t-icon name="folder-import" size="16px" />
+                                  <span>{{ $t('knowledgeFolder.moveFolder') }}</span>
+                                </div>
+                                <t-popconfirm theme="warning"
+                                  :content="$t('knowledgeFolder.confirmDeleteFolder', { name: f.file_name || '' })"
+                                  :confirm-btn="{ content: $t('common.confirm'), theme: 'danger' }"
+                                  :cancel-btn="{ content: $t('common.cancel') }" placement="left"
+                                  @confirm="confirmDeleteFolder(f)">
+                                  <div class="folder-card-menu-item danger">
+                                    <t-icon name="delete" size="16px" />
+                                    <span>{{ $t('knowledgeFolder.deleteFolder') }}</span>
+                                  </div>
+                                </t-popconfirm>
+                              </div>
+                            </template>
+                          </t-popup>
+                        </div>
+                      </div>
+                      <div class="card-bottom">
+                        <span class="card-bottom-tag">{{ $t('knowledgeFolder.itemCount', { count: f.knowledge_count || 0 }) }}</span>
+                        <span class="card-bottom-time">{{ new Date(f.created_at).toLocaleDateString() }}</span>
+                      </div>
+                    </div>
+                    <!-- 文档卡片 -->
+                    <DocumentCardView
+                      inline
                     :items="cardList"
                     :selected-ids="selectedIds"
                     :batch-mode="batchMode"
@@ -2295,6 +2832,7 @@ async function createNewSession(value: string): Promise<void> {
                     :can-mutate-knowledge="canMutateKnowledge"
                     :trace-available-by-id="traceAvailableById"
                     :tag-list="tagList"
+                    :folder-tree-present="folderTree.length > 0"
                     :move-menu-mode="moveMenuMode"
                     :move-target-kbs="moveTargetKbs"
                     :move-targets-loading="moveTargetsLoading"
@@ -2311,18 +2849,23 @@ async function createNewSession(value: string): Promise<void> {
                     @move-confirm="handleMoveConfirm"
                     @update:move-mode="(mode: any) => moveMode = mode"
                   />
+                  </div>
                 </template>
-                <template v-else-if="cardList.length && viewMode === 'list'">
-                  <DocumentListView :items="cardList" :selected-ids="selectedIds" :tag-list="tagList"
+                <template v-else-if="displayCardList.length && viewMode === 'list'">
+                  <DocumentListView :items="displayCardList" :selected-ids="selectedIds" :tag-list="tagList"
                     :can-edit="canEdit" :can-mutate-knowledge="canMutateKnowledge"
                     :trace-visible-ids="traceAvailableById"
+                    :folder-tree-present="folderTree.length > 0"
                     :move-menu-mode="moveMenuMode"
                     :move-target-kbs="moveTargetKbs"
                     :move-targets-loading="moveTargetsLoading"
                     :move-selected-target-name="moveSelectedTargetName"
                     :move-mode="moveMode"
                     :move-submitting="moveSubmitting"
-                    @open="(item: any) => openKnowledgeItem(item)" @toggle-row="toggleSelectRow"
+                    @open="(item: any) => openKnowledgeItem(item)"
+                    @enter-folder="(folderId: string) => handleFolderNavigate(folderId)"
+                    @move-folder="(item: any) => handleMoveFolder(item)"
+                    @toggle-row="toggleSelectRow"
                     @toggle-all="toggleSelectAll" @action="(action: any, item: any) => handleListAction(action, item)"
                     @probe-trace="(item: any) => probeTraceAvailable(item)"
                     @tag-edit="(item: any) => openTagEditDialog(item)"
@@ -2343,7 +2886,7 @@ async function createNewSession(value: string): Promise<void> {
                   :reparse-loading="batchReparsing" :batch-tag-loading="batchTagLoading"
                   :visible="batchMode || selectedIds.size > 0"
                   @cancel="handleBatchCancel" @delete="confirmBatchDelete" @reparse="confirmBatchReparse"
-                  @batch-tag="openBatchTagDialog" />
+                  @batch-tag="openBatchTagDialog" @move-folder="handleBatchMoveToFolder" />
               </div>
             </div>
           </div>
@@ -2388,6 +2931,45 @@ async function createNewSession(value: string): Promise<void> {
     :kb-id="kbId"
     :is-faq="isFAQ"
     @changed="onTagManageChanged"
+  />
+
+  <!-- Folder management dialog -->
+  <FolderManageDialog
+    v-model:visible="folderDialogVisible"
+    :kb-id="kbId"
+    :mode="folderDialogMode"
+    :folder="currentEditFolder"
+    :parent-folder-id="currentFolderId"
+    @success="handleFolderDialogSuccess"
+  />
+
+  <!-- Move knowledge to another KB (shared by grid + list views) -->
+  <MoveKnowledgeDialog
+    v-model:visible="moveKbDialogVisible"
+    :knowledge-ids="moveKbDialogIds"
+    :source-kb-id="kbId"
+    @moved="handleMoveKbDialogMoved"
+  />
+
+  <!-- Move knowledge to a folder within the current KB -->
+  <FolderSelector
+    v-model:visible="moveFolderDialogVisible"
+    :title="t('knowledgeBase.moveToFolder')"
+    :folder-tree="folderTree"
+    :tree-loading="treeLoading"
+    :current-folder-id="currentFolderId"
+    @confirm="handleMoveFolderConfirm"
+  />
+
+  <!-- Move a folder itself to another parent folder within the current KB -->
+  <FolderSelector
+    v-model:visible="folderMoveDialogVisible"
+    :title="t('knowledgeFolder.moveFolder')"
+    :folder-tree="folderTree"
+    :tree-loading="treeLoading"
+    :current-folder-id="folderToMove?.parent_folder_id || null"
+    :disabled-folder-ids="folderMoveDisabledIds"
+    @confirm="handleConfirmFolderMove"
   />
 </template>
 <style>
@@ -2885,6 +3467,14 @@ async function createNewSession(value: string): Promise<void> {
     }
   }
 
+  .doc-search-in-folder {
+    flex-shrink: 0;
+    font-size: 13px;
+    color: var(--td-text-color-secondary);
+    white-space: nowrap;
+    user-select: none;
+  }
+
   .doc-type-select {
     width: 100%;
   }
@@ -2930,21 +3520,6 @@ async function createNewSession(value: string): Promise<void> {
         background: var(--td-bg-color-container, #fff);
         color: var(--td-brand-color, #0052d9);
         box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
-      }
-    }
-  }
-
-  .doc-filter-actions {
-    flex-shrink: 0;
-
-    :deep(.content-bar-icon-btn) {
-      color: var(--td-text-color-secondary);
-      background: transparent;
-      border: none;
-
-      &:hover {
-        color: var(--td-brand-color);
-        background: var(--td-bg-color-secondarycontainer);
       }
     }
   }
@@ -3425,10 +4000,17 @@ async function createNewSession(value: string): Promise<void> {
   align-content: flex-start;
   width: 100%;
 
+  // When the folder-card-list wrapper is empty (no folders), collapse
+  // so it doesn't add extra gap in the parent flex.
+  &:empty {
+    display: none;
+  }
+
   &.doc-card-list-animated {
     animation: contentFadeIn 0.32s ease-out;
   }
 }
+
 
 .knowledge-card-skeleton {
   cursor: default;
@@ -3995,6 +4577,27 @@ async function createNewSession(value: string): Promise<void> {
     max-width: 100%;
   }
 
+  .card-popover-folder {
+    font-size: 11px;
+    color: var(--td-text-color-secondary);
+    margin-bottom: 6px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    overflow: hidden;
+    white-space: nowrap;
+
+    .card-popover-folder-label {
+      flex-shrink: 0;
+    }
+
+    .card-popover-folder-path {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+  }
+
   .card-popover-extra {
     display: flex;
     align-items: center;
@@ -4125,5 +4728,121 @@ async function createNewSession(value: string): Promise<void> {
 
 .del-card {
   vertical-align: middle;
+}
+
+/* ---- Folder breadcrumb bar ---- */
+.folder-breadcrumb-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 16px;
+  margin: 0 0 4px;
+  background: var(--td-bg-color-secondarycontainer);
+  border-radius: 6px;
+  font-size: 13px;
+  overflow: hidden;
+  white-space: nowrap;
+  transition: margin 0.15s ease, padding 0.15s ease;
+}
+
+.folder-breadcrumb-icon {
+  font-size: 16px;
+  color: var(--td-warning-color);
+  margin-right: 4px;
+  flex-shrink: 0;
+}
+
+.folder-breadcrumb-link {
+  border: none;
+  background: transparent;
+  padding: 2px 6px;
+  font-size: 13px;
+  color: var(--td-text-color-secondary);
+  cursor: pointer;
+  border-radius: 4px;
+  transition: all 0.12s ease;
+
+  &:hover {
+    color: var(--td-brand-color);
+    background: var(--td-bg-color-container-hover);
+  }
+
+  &.current {
+    color: var(--td-text-color-primary);
+    font-weight: 600;
+  }
+}
+
+.folder-breadcrumb-sep {
+  font-size: 12px;
+  color: var(--td-text-color-placeholder);
+  flex-shrink: 0;
+}
+
+/* ---- Folder card in grid ---- */
+.knowledge-card--folder {
+  cursor: pointer;
+  .card-content-nav {
+    gap: 6px;
+  }
+  .folder-card-icon {
+    color: var(--td-warning-color);
+    flex-shrink: 0;
+  }
+  .folder-card-more {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--td-text-color-placeholder);
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.12s, color 0.12s;
+    flex-shrink: 0;
+    margin-left: auto;
+    &:hover {
+      color: var(--td-brand-color);
+      background: var(--td-brand-color-light);
+    }
+  }
+  &:hover .folder-card-more {
+    opacity: 1;
+  }
+  &:hover {
+    border-color: var(--td-warning-color);
+  }
+}
+
+/* Folder card ⋯ menu */
+.folder-card-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px;
+  min-width: 160px;
+}
+.folder-card-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 4px;
+  font-size: 13px;
+  cursor: pointer;
+  color: var(--td-text-color-primary);
+  transition: background 0.12s;
+  &:hover {
+    background: var(--td-bg-color-container-hover);
+  }
+  &.danger {
+    color: var(--td-error-color);
+    &:hover {
+      background: var(--td-error-color-1);
+    }
+  }
 }
 </style>
