@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
@@ -30,7 +31,37 @@ import (
 var (
 	jwtSecretOnce sync.Once
 	jwtSecret     string
+
+	// ErrPasswordPolicy is returned when a newly chosen password does not
+	// meet the product's public 8-32 character, letter-and-number contract.
+	// It is exported so HTTP handlers can translate the failure to a 400
+	// without exposing bcrypt or persistence errors.
+	ErrPasswordPolicy = errors.New("password must be 8-32 characters and contain at least one letter and one number")
 )
+
+// ValidatePasswordPolicy keeps administrative password resets aligned with
+// the registration form's documented policy. Password bytes are never logged
+// or included in the returned error.
+func ValidatePasswordPolicy(password string) error {
+	length := utf8.RuneCountInString(password)
+	if length < 8 || length > 32 {
+		return ErrPasswordPolicy
+	}
+	hasLetter := false
+	hasNumber := false
+	for _, r := range password {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z':
+			hasLetter = true
+		case r >= '0' && r <= '9':
+			hasNumber = true
+		}
+	}
+	if !hasLetter || !hasNumber {
+		return ErrPasswordPolicy
+	}
+	return nil
+}
 
 // getJwtSecret retrieves the JWT secret from the environment, falling back to a securely generated random secret.
 func getJwtSecret() string {
@@ -619,6 +650,9 @@ func (s *userService) SetUserActive(ctx context.Context, userID string, active b
 // ChangePassword's post-reset behaviour: every outstanding session token
 // for the user is revoked so a stolen token cannot survive the rotation.
 func (s *userService) AdminResetPassword(ctx context.Context, userID, newPassword string) error {
+	if err := ValidatePasswordPolicy(newPassword); err != nil {
+		return err
+	}
 	user, err := s.userRepo.GetUserByID(ctx, userID)
 	if err != nil {
 		return err

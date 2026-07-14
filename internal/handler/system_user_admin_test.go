@@ -301,14 +301,14 @@ func TestAdminResetPassword_Success(t *testing.T) {
 			return &types.User{ID: id, Email: "t@x.com", Username: "t"}, nil
 		},
 		resetPW: func(_ context.Context, userID, pw string) error {
-			if userID != "u-target" || pw != "brand-new-pw" {
+			if userID != "u-target" || pw != "brand-new-pw9" {
 				t.Fatalf("resetPW args = (%q, %q)", userID, pw)
 			}
 			return nil
 		},
 	}
 	r := newSystemUserTestRouter(newSystemUserHandler(svc), "admin-1")
-	body := map[string]any{"new_password": "brand-new-pw"}
+	body := map[string]any{"new_password": "brand-new-pw9"}
 	w := doUserAdminJSON(t, r, http.MethodPost, "/system/admin/users/u-target/reset-password", body)
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d body=%s", w.Code, w.Body.String())
@@ -326,7 +326,7 @@ func TestAdminResetPassword_NotFound(t *testing.T) {
 		},
 	}
 	r := newSystemUserTestRouter(newSystemUserHandler(svc), "admin-1")
-	body := map[string]any{"new_password": "brand-new-pw"}
+	body := map[string]any{"new_password": "brand-new-pw9"}
 	w := doUserAdminJSON(t, r, http.MethodPost, "/system/admin/users/ghost/reset-password", body)
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d", w.Code)
@@ -345,5 +345,23 @@ func TestAdminResetPassword_ValidationRejectsShort(t *testing.T) {
 	w := doUserAdminJSON(t, r, http.MethodPost, "/system/admin/users/u-target/reset-password", body)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestAdminResetPassword_RejectsSelfReset(t *testing.T) {
+	svc := &stubUserAdminService{
+		getByID: func(_ context.Context, id string) (*types.User, error) {
+			return &types.User{ID: id, Email: "admin@x.com", Username: "admin"}, nil
+		},
+		resetPW: func(context.Context, string, string) error {
+			t.Fatal("resetPW must not run on self reset")
+			return nil
+		},
+	}
+	r := newSystemUserTestRouter(newSystemUserHandler(svc), "admin-1")
+	body := map[string]any{"new_password": "brand-new-pw9"}
+	w := doUserAdminJSON(t, r, http.MethodPost, "/system/admin/users/admin-1/reset-password", body)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d body=%s", w.Code, w.Body.String())
 	}
 }
