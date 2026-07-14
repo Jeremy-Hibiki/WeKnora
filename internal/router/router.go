@@ -875,6 +875,7 @@ func RegisterSystemAdminRoutes(
 		adminRoutes.POST("/promote", handler.PromoteUserToSystemAdmin)
 		adminRoutes.POST("/revoke", handler.RevokeSystemAdmin)
 		adminRoutes.GET("/list", handler.ListSystemAdmins)
+		adminRoutes.POST("/users/reset-password", handler.ResetUserPassword)
 
 		// User management (SystemAdmin). CRUD over the platform's user
 		// roster — list/search, create, enable/disable, reset password.

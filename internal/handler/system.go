@@ -1362,6 +1362,72 @@ func (h *SystemHandler) ListSystemAdmins(c *gin.Context) {
 	})
 }
 
+// ResetUserPasswordRequest defines the system-administrator password-reset
+// payload. Email is intentionally the only user-facing identifier: the UI is
+// an operator tool and emails are easier to verify than UUIDs. The password is
+// never written to logs or audit details.
+type ResetUserPasswordRequest struct {
+	Email       string `json:"email" binding:"required,email"`
+	NewPassword string `json:"new_password" binding:"required"`
+}
+
+// ResetUserPassword godoc
+// @Summary      Reset another user's password
+// @Description  Replace another user's local password and revoke all of their existing sessions (SystemAdmin only).
+// @Description  A system administrator cannot reset their own password through this endpoint; self-service password change still requires the old password.
+// @Tags         System Admin
+// @Accept       json
+// @Produce      json
+// @Param        request body ResetUserPasswordRequest true "Password reset request"
+// @Success      200  {object}  map[string]interface{}  "Password reset successfully"
+// @Failure      400  {object}  map[string]interface{}  "Invalid request, weak password, or self reset"
+// @Failure      403  {object}  map[string]interface{}  "Forbidden: not a system admin"
+// @Failure      404  {object}  map[string]interface{}  "User not found"
+// @Router       /system/admin/users/reset-password [post]
+func (h *SystemHandler) ResetUserPassword(c *gin.Context) {
+	ctx := logger.CloneContext(c.Request.Context())
+
+	var req ResetUserPasswordRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid password reset request"})
+		return
+	}
+	req.Email = strings.TrimSpace(req.Email)
+	if err := service.ValidatePasswordPolicy(req.NewPassword); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	user, err := h.userSvc.GetUserByEmail(ctx, req.Email)
+	if err != nil || user == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
+		return
+	}
+	callerID, _ := types.UserIDFromContext(ctx)
+	if callerID == user.ID {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Cannot reset your own password here"})
+		return
+	}
+
+	if err := h.userSvc.AdminResetPassword(ctx, user.ID, req.NewPassword); err != nil {
+		if errors.Is(err, service.ErrPasswordPolicy) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		logger.Errorf(ctx, "Failed to reset password for user %s: %v", user.ID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to reset user password"})
+		return
+	}
+
+	logger.Infof(ctx, "Password reset by system administrator for user ID: %s", user.ID)
+	h.emitAdminAudit(ctx, types.AuditActionSystemUserPasswordReset, user, map[string]any{
+		"target_email":     user.Email,
+		"target_username":  user.Username,
+		"sessions_revoked": true,
+	})
+	c.JSON(http.StatusOK, gin.H{"message": "Password reset successfully"})
+}
+
 // ============================================================================
 // System Settings (P1)
 // ----------------------------------------------------------------------------
@@ -1566,7 +1632,7 @@ func (h *SystemHandler) UpdateUserStatus(c *gin.Context) {
 // POST /system/admin/users/:id/reset-password. The new password is never
 // logged to the audit feed — only the fact that a reset happened.
 type AdminResetPasswordRequest struct {
-	NewPassword string `json:"new_password" binding:"required,min=6"`
+	NewPassword string `json:"new_password" binding:"required"`
 }
 
 // AdminResetPassword godoc
@@ -1574,15 +1640,17 @@ type AdminResetPasswordRequest struct {
 // @Description  Set a new password for a user without requiring the old
 // @Description  password. The SystemAdmin caller is the authorisation.
 // @Description  Every outstanding session token for the user is revoked
-// @Description  so a stolen token cannot survive the reset. The new
-// @Description  password itself is never logged.
+// @Description  so a stolen token cannot survive the reset. A system admin
+// @Description  cannot reset their own password here; self-service password
+// @Description  change still requires the old password. The new password
+// @Description  itself is never logged.
 // @Tags         System Admin
 // @Accept       json
 // @Produce      json
 // @Param        id      path string                     true "User ID"
 // @Param        request body AdminResetPasswordRequest  true "New password"
 // @Success      200  {object}  map[string]interface{} "{ ok: true }"
-// @Failure      400  {object}  map[string]interface{} "Bad request"
+// @Failure      400  {object}  map[string]interface{} "Bad request / weak password / self reset"
 // @Failure      403  {object}  map[string]interface{} "Forbidden: not a system admin"
 // @Failure      404  {object}  map[string]interface{} "User not found"
 // @Router       /system/admin/users/{id}/reset-password [post]
@@ -1597,6 +1665,13 @@ func (h *SystemHandler) AdminResetPassword(c *gin.Context) {
 	var req AdminResetPasswordRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request: " + err.Error()})
+		return
+	}
+
+	// Validate password strength early — before any DB lookup — so a
+	// weak password never causes side effects (user fetch, audit row).
+	if err := service.ValidatePasswordPolicy(req.NewPassword); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -1615,7 +1690,20 @@ func (h *SystemHandler) AdminResetPassword(c *gin.Context) {
 		return
 	}
 
+	// Safety: a system admin must not reset their own password here —
+	// self-service password change still requires the old password, which
+	// is a stronger proof of identity than admin role alone.
+	callerID, _ := types.UserIDFromContext(ctx)
+	if callerID == userID {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Cannot reset your own password here"})
+		return
+	}
+
 	if err := h.userSvc.AdminResetPassword(ctx, userID, req.NewPassword); err != nil {
+		if errors.Is(err, service.ErrPasswordPolicy) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 		logger.Errorf(ctx, "Error resetting password for user %s: %v", userID, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to reset password"})
 		return
