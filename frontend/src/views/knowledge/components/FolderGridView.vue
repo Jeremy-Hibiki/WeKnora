@@ -25,7 +25,7 @@
           <div class="item-name" :title="item.name">{{ item.name }}</div>
 
           <div class="item-meta">
-            <span v-if="item.type === 'folder'">{{ item.knowledge_count || 0 }} 项</span>
+            <span v-if="item.type === 'folder'">{{ $t('knowledgeFolder.itemCount', { count: item.knowledge_count || 0 }) }}</span>
             <span v-else>{{ formatFileSize(item.file_size) }}</span>
           </div>
 

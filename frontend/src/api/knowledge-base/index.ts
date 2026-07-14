@@ -274,6 +274,7 @@ export function createManualKnowledge(
   title: string
   content: string
   status: string
+  folder_id?: string
   tag_ids?: string[]
   process_config?: KnowledgeProcessOverrides
  },

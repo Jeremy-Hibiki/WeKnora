@@ -54,7 +54,7 @@ const emit = defineEmits<{
   (e: 'enter-folder', folderId: string): void;
   (e: 'toggle-row', id: string, checked: boolean, shiftKey: boolean): void;
   (e: 'toggle-all', checked: boolean): void;
-  (e: 'action', action: 'edit' | 'reparse' | 'cancel-parse' | 'move' | 'move-folder' | 'delete' | 'view-trace' | 'batch-manage', item: KnowledgeItem): void;
+  (e: 'action', action: 'edit' | 'reparse' | 'cancel-parse' | 'move' | 'move-folder' | 'rename-folder' | 'delete' | 'view-trace' | 'batch-manage', item: KnowledgeItem): void;
   (e: 'probe-trace', item: KnowledgeItem): void;
   (e: 'tag-edit', item: KnowledgeItem): void;
   // Move sub-flow emits
@@ -165,10 +165,12 @@ const statusByRow = computed(() => {
 });
 
 const allSelected = computed(() => {
-  return props.items.length > 0 && props.items.every(i => props.selectedIds.has(i.id));
+  const docItems = props.items.filter(i => !i.isFolder);
+  return docItems.length > 0 && docItems.every(i => props.selectedIds.has(i.id));
 });
 const someSelected = computed(() => {
-  return props.items.some(i => props.selectedIds.has(i.id)) && !allSelected.value;
+  const docItems = props.items.filter(i => !i.isFolder);
+  return docItems.some(i => props.selectedIds.has(i.id)) && !allSelected.value;
 });
 
 const onHeaderCheckboxChange = (checked: boolean) => {
@@ -211,7 +213,7 @@ onBeforeUnmount(() => {
   stickyObserver = null;
 });
 
-const handleAction = (action: 'edit' | 'reparse' | 'cancel-parse' | 'move' | 'move-folder' | 'delete' | 'view-trace' | 'batch-manage', item: KnowledgeItem) => {
+const handleAction = (action: 'edit' | 'reparse' | 'cancel-parse' | 'move' | 'move-folder' | 'rename-folder' | 'delete' | 'view-trace' | 'batch-manage', item: KnowledgeItem) => {
   // Don't close popup for move — it triggers the move sub-flow
   if (action !== 'move') {
     moreOpen.value = null;
@@ -301,7 +303,7 @@ const handleAction = (action: 'edit' | 'reparse' | 'cancel-parse' | 'move' | 'mo
 
         <div class="cell cell-size">
           <template v-if="item.isFolder">
-            <span class="row-mono">{{ item.knowledge_count ?? 0 }} {{ $t('knowledgeFolder.itemCount', { count: item.knowledge_count ?? 0 }) }}</span>
+            <span class="row-mono">{{ $t('knowledgeFolder.itemCount', { count: item.knowledge_count ?? 0 }) }}</span>
           </template>
           <template v-else>
             <span class="row-mono">{{ formatFileSize(item.file_size) || '--' }}</span>
@@ -333,6 +335,10 @@ const handleAction = (action: 'edit' | 'reparse' | 'cancel-parse' | 'move' | 'mo
 
         <div class="cell cell-actions" v-if="canEdit" @click.stop>
           <template v-if="item.isFolder">
+            <button class="row-more-btn" type="button" :aria-label="$t('knowledgeFolder.renameFolder')"
+              @click="emit('action', 'rename-folder', item)">
+              <t-icon name="edit" size="16px" />
+            </button>
             <button class="row-more-btn" type="button" :aria-label="$t('knowledgeFolder.moveFolder')"
               @click="emit('move-folder', item)">
               <t-icon name="folder-import" size="16px" />

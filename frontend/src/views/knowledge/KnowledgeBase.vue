@@ -392,6 +392,13 @@ const moveFolderKnowledgeIds = ref<string[]>([]);
 // Move-folder-to-folder state
 const folderMoveDialogVisible = ref(false);
 const folderToMove = ref<KnowledgeFolder | null>(null);
+// Move sub-flow state used by DocumentCardView/DocumentListView inline menus.
+const moveMenuMode = ref<'normal' | 'targets' | 'confirm'>('normal');
+const moveTargetKbs = ref<any[]>([]);
+const moveTargetsLoading = ref(false);
+const moveSelectedTargetName = ref('');
+const moveMode = ref<'reuse_vectors' | 'reparse'>('reuse_vectors');
+const moveSubmitting = ref(false);
 // Batch move state: folders + knowledge IDs to move together.
 const batchMoveFolders = ref<KnowledgeFolder[]>([]);
 const batchMoveKnowledgeIds = ref<string[]>([]);
@@ -620,6 +627,11 @@ const handleFolderNavigate = async (folderId: string | null) => {
 const handleCreateFolder = () => {
   folderDialogMode.value = 'create';
   currentEditFolder.value = null;
+  folderDialogVisible.value = true;
+};
+const handleRenameFolder = (folder: KnowledgeFolder) => {
+  folderDialogMode.value = 'edit';
+  currentEditFolder.value = folder;
   folderDialogVisible.value = true;
 };
 
@@ -1428,6 +1440,20 @@ const handleBatchMoveToFolder = () => {
   folderMoveDialogVisible.value = true;
 };
 
+// Move sub-flow handlers for the inline card/list menu. The actual KB move is
+// handled by MoveKnowledgeDialog via handleMoveKnowledge, so these just reset
+// the inline menu state back to normal.
+const handleMoveSelectTarget = (_kb: any) => {
+  moveMenuMode.value = 'normal';
+};
+const handleMoveBack = () => {
+  moveMenuMode.value = 'normal';
+};
+const handleMoveConfirm = () => {
+  moveSubmitting.value = false;
+  moveMenuMode.value = 'normal';
+};
+
 // Refresh knowledge files and folder tree
 const handleRefresh = async () => {
   resetPage();
@@ -1436,50 +1462,20 @@ const handleRefresh = async () => {
   loadFolderTree();
 };
 
-// Confirm move-to-folder: batch-move knowledge entries or folder(s).
+// Confirm move-to-folder: batch-move knowledge entries.
 const handleMoveFolderConfirm = async (targetFolderId: string | null) => {
-  // Case 1: Knowledge entries (existing flow).
-  if (moveFolderKnowledgeIds.value.length > 0) {
-    const ids = moveFolderKnowledgeIds.value;
-    moveFolderKnowledgeIds.value = [];
-    try {
-      await batchMoveKnowledgeToFolder({ knowledge_ids: ids, folder_id: targetFolderId });
-      MessagePlugin.success(t('knowledgeBase.moveToFolderSuccess'));
-      handleRefresh();
-    } catch (err) {
-      const message = (err as { message?: string })?.message || '移动失败';
-      MessagePlugin.error(message);
-    }
+  if (moveFolderKnowledgeIds.value.length === 0) {
     return;
   }
-  // Case 2: Single folder move.
-  if (folderToMove.value) {
-    const folder = folderToMove.value;
-    folderToMove.value = null;
-    try {
-      await moveFolder(kbId.value, folder.id, { target_parent_folder_id: targetFolderId });
-      MessagePlugin.success('移动成功');
-      handleRefresh();
-    } catch (err) {
-      const message = (err as { message?: string })?.message || '移动失败';
-      MessagePlugin.error(message);
-    }
-    return;
-  }
-  // Case 3: Multiple folders → batch-move each one.
-  if (batchMoveFolders.value.length > 0) {
-    const folders = batchMoveFolders.value;
-    batchMoveFolders.value = [];
-    try {
-      for (const folder of folders) {
-        await moveFolder(kbId.value, folder.id, { target_parent_folder_id: targetFolderId });
-      }
-      MessagePlugin.success('移动成功');
-      handleRefresh();
-    } catch (err) {
-      const message = (err as { message?: string })?.message || '移动失败';
-      MessagePlugin.error(message);
-    }
+  const ids = moveFolderKnowledgeIds.value;
+  moveFolderKnowledgeIds.value = [];
+  try {
+    await batchMoveKnowledgeToFolder({ knowledge_ids: ids, folder_id: targetFolderId });
+    MessagePlugin.success(t('knowledgeBase.moveToFolderSuccess'));
+    handleRefresh();
+  } catch (err) {
+    const message = (err as { message?: string })?.message || t('knowledgeBase.moveToFolderFailed');
+    MessagePlugin.error(message);
   }
 };
 
@@ -1499,10 +1495,10 @@ const handleConfirmFolderMove = async (targetFolderId: string | null) => {
     folderToMove.value = null;
     try {
       await moveFolder(kbId.value, folder.id, { target_parent_folder_id: targetFolderId });
-      MessagePlugin.success('移动成功');
+      MessagePlugin.success(t('knowledgeBase.moveToFolderSuccess'));
       handleRefresh();
     } catch (err) {
-      const message = (err as { message?: string })?.message || '移动失败';
+      const message = (err as { message?: string })?.message || t('knowledgeBase.moveToFolderFailed');
       MessagePlugin.error(message);
     }
     return;
@@ -1520,10 +1516,10 @@ const handleConfirmFolderMove = async (targetFolderId: string | null) => {
         await batchMoveKnowledgeToFolder({ knowledge_ids: batchMoveKnowledgeIds.value, folder_id: targetFolderId });
         batchMoveKnowledgeIds.value = [];
       }
-      MessagePlugin.success('移动成功');
+      MessagePlugin.success(t('knowledgeBase.moveToFolderSuccess'));
       handleRefresh();
     } catch (err) {
-      const message = (err as { message?: string })?.message || '移动失败';
+      const message = (err as { message?: string })?.message || t('knowledgeBase.moveToFolderFailed');
       MessagePlugin.error(message);
     }
   } else if (batchMoveKnowledgeIds.value.length > 0) {
@@ -1535,7 +1531,7 @@ const handleConfirmFolderMove = async (targetFolderId: string | null) => {
       MessagePlugin.success(t('knowledgeBase.moveToFolderSuccess'));
       handleRefresh();
     } catch (err) {
-      const message = (err as { message?: string })?.message || '移动失败';
+      const message = (err as { message?: string })?.message || t('knowledgeBase.moveToFolderFailed');
       MessagePlugin.error(message);
     }
   }
@@ -2035,6 +2031,7 @@ const handleManualCreate = () => {
     mode: 'create',
     kbId: kbId.value,
     status: 'draft',
+    folderId: currentFolderId.value,
     onSuccess: manualEditorSuccess,
   });
 };
@@ -2360,7 +2357,7 @@ const confirmCancelParseKnowledge = async (item: KnowledgeCard) => {
 
 // Bridge card-view actions back to existing per-card handlers.
 const handleCardAction = (
-  action: 'edit' | 'reparse' | 'cancel-parse' | 'move' | 'delete' | 'view-trace' | 'batch-manage',
+  action: 'edit' | 'reparse' | 'cancel-parse' | 'move' | 'move-folder' | 'delete' | 'view-trace' | 'batch-manage',
   item: KnowledgeCard,
 ) => {
   const idx = (cardList.value || []).findIndex((i: KnowledgeCard) => i.id === item.id);
@@ -2371,6 +2368,7 @@ const handleCardAction = (
   }
   if (action === 'cancel-parse') return confirmCancelParseKnowledge(item);
   if (action === 'move') return handleMoveKnowledge(item);
+  if (action === 'move-folder') return handleMoveToFolder(item);
   if (action === 'delete') return confirmDeleteKnowledge(idx, item);
   if (action === 'view-trace') return handleViewTrace(idx, item);
   if (action === 'batch-manage') return handleEnterBatchFromCard(item);
@@ -2378,7 +2376,7 @@ const handleCardAction = (
 
 // Bridge list-view actions back to existing per-card handlers.
 const handleListAction = (
-  action: 'edit' | 'reparse' | 'cancel-parse' | 'move' | 'move-folder' | 'delete' | 'view-trace' | 'batch-manage',
+  action: 'edit' | 'reparse' | 'cancel-parse' | 'move' | 'move-folder' | 'rename-folder' | 'delete' | 'view-trace' | 'batch-manage',
   item: KnowledgeCard & { isFolder?: boolean },
 ) => {
   // Handle folder actions
@@ -2388,6 +2386,9 @@ const handleListAction = (
     }
     if (action === 'move-folder') {
       handleMoveFolder(item as any);
+    }
+    if (action === 'rename-folder') {
+      handleRenameFolder(item as any);
     }
     return;
   }
@@ -2793,6 +2794,10 @@ async function createNewSession(value: string): Promise<void> {
                             </button>
                             <template #content>
                               <div class="folder-card-menu">
+                                <div class="folder-card-menu-item" @click.stop="handleRenameFolder(f)">
+                                  <t-icon name="edit" size="16px" />
+                                  <span>{{ $t('knowledgeFolder.renameFolder') }}</span>
+                                </div>
                                 <div class="folder-card-menu-item" @click.stop="handleMoveFolder(f)">
                                   <t-icon name="folder-import" size="16px" />
                                   <span>{{ $t('knowledgeFolder.moveFolder') }}</span>
@@ -2827,6 +2832,7 @@ async function createNewSession(value: string): Promise<void> {
                     :can-mutate-knowledge="canMutateKnowledge"
                     :trace-available-by-id="traceAvailableById"
                     :tag-list="tagList"
+                    :folder-tree-present="folderTree.length > 0"
                     :move-menu-mode="moveMenuMode"
                     :move-target-kbs="moveTargetKbs"
                     :move-targets-loading="moveTargetsLoading"

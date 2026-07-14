@@ -46,7 +46,7 @@ const dialogVisible = computed({
   set: (value) => emit('update:visible', value),
 });
 
-const dialogTitle = computed(() => props.mode === 'create' ? t('knowledgeFolder.createFolder') : t('knowledgeFolder.editFolder'));
+const dialogTitle = computed(() => props.mode === 'create' ? t('knowledgeFolder.createFolder') : t('knowledgeFolder.renameFolder'));
 
 const rules = {
   name: [{ required: true, message: t('knowledgeFolder.folderNameRequired'), type: 'error' }],
@@ -72,13 +72,14 @@ const handleConfirm = async () => {
       MessagePlugin.success(t('knowledgeFolder.folderCreatedSuccess'));
     } else if (props.folder) {
       await updateFolder(props.kbId, props.folder.id, { name: formData.value.name });
-      MessagePlugin.success(t('knowledgeFolder.folderUpdatedSuccess'));
+      MessagePlugin.success(t('knowledgeFolder.renameFolderSuccess'));
     }
 
     emit('success');
     dialogVisible.value = false;
   } catch (error: any) {
-    MessagePlugin.error(error.message || t('knowledgeFolder.folderCreatedFailed'));
+    const fallback = props.mode === 'create' ? t('knowledgeFolder.folderCreatedFailed') : t('knowledgeFolder.renameFolderFailed');
+    MessagePlugin.error(error.message || fallback);
     return false;
   }
 };

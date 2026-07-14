@@ -18,7 +18,7 @@
       </template>
 
       <template #size="{ row }">
-        <span v-if="row.type === 'folder'">{{ row.knowledge_count || 0 }} 项</span>
+        <span v-if="row.type === 'folder'">{{ $t('knowledgeFolder.itemCount', { count: row.knowledge_count || 0 }) }}</span>
         <span v-else>{{ formatFileSize(row.file_size) }}</span>
       </template>
 
