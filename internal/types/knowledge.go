@@ -182,6 +182,36 @@ type Knowledge struct {
 	KnowledgeBaseName string `json:"knowledge_base_name" gorm:"-"`
 }
 
+// GetFolderID returns the folder ID as a string, empty for root-level entries.
+func (k *Knowledge) GetFolderID() string {
+	if k == nil || k.FolderID == nil {
+		return ""
+	}
+	return *k.FolderID
+}
+
+// FolderIDPtrToString converts a *string folder ID to a string, returning "" for nil (root).
+func FolderIDPtrToString(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
+// BackfillKBError records a per-KB failure during a folder-metadata backfill sweep.
+type BackfillKBError struct {
+	KBID  string `json:"kb_id"`
+	Error string `json:"error"`
+}
+
+// BackfillResult reports the outcome of a folder-metadata backfill operation.
+type BackfillResult struct {
+	TotalKBs              int               `json:"total_kbs"`
+	ProcessedKBs          int               `json:"processed_kbs"`
+	TotalKnowledgeUpdated int               `json:"total_knowledge_updated"`
+	Errors                []BackfillKBError `json:"errors,omitempty"`
+}
+
 // GetMetadata returns the metadata as a map[string]string.
 func (k *Knowledge) GetMetadata() map[string]string {
 	metadata := make(map[string]string)

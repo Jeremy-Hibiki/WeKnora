@@ -361,6 +361,64 @@ func TestEnsureFolderPath_RealDBAtomic(t *testing.T) {
 	assert.Equal(t, int64(1), count, "exactly one 'docs' folder must exist")
 }
 
+// --- ListFolderIDsWithDescendants tests ---
+
+func TestListFolderIDsWithDescendants_NoDescendants(t *testing.T) {
+	db := setupKnowledgeFolderTestDB(t)
+	tenantID, kbID, _, _, folderC := seedKnowledgeFolderFixture(t, db)
+	repo := NewKnowledgeRepository(db)
+
+	// folderC has no children — should return just [folderC].
+	ids, err := repo.ListFolderIDsWithDescendants(context.Background(), tenantID, kbID, []string{folderC})
+	require.NoError(t, err)
+	assert.Equal(t, []string{folderC}, ids)
+}
+
+func TestListFolderIDsWithDescendants_IncludesDescendants(t *testing.T) {
+	db := setupKnowledgeFolderTestDB(t)
+	tenantID, kbID, rootFolderA, childFolderB, _ := seedKnowledgeFolderFixture(t, db)
+	repo := NewKnowledgeRepository(db)
+
+	// rootFolderA has child childFolderB — should return [rootFolderA, childFolderB].
+	ids, err := repo.ListFolderIDsWithDescendants(context.Background(), tenantID, kbID, []string{rootFolderA})
+	require.NoError(t, err)
+	assert.Contains(t, ids, rootFolderA)
+	assert.Contains(t, ids, childFolderB)
+	assert.Len(t, ids, 2)
+}
+
+func TestListFolderIDsWithDescendants_RootToken(t *testing.T) {
+	db := setupKnowledgeFolderTestDB(t)
+	tenantID, kbID, _, _, _ := seedKnowledgeFolderFixture(t, db)
+	repo := NewKnowledgeRepository(db)
+
+	// "__root__" is a sentinel, not a real folder row — must pass through as-is.
+	ids, err := repo.ListFolderIDsWithDescendants(context.Background(), tenantID, kbID, []string{"__root__"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"__root__"}, ids)
+}
+
+func TestListFolderIDsWithDescendants_NonExistentSkipped(t *testing.T) {
+	db := setupKnowledgeFolderTestDB(t)
+	tenantID, kbID, _, _, folderC := seedKnowledgeFolderFixture(t, db)
+	repo := NewKnowledgeRepository(db)
+
+	// Non-existent folder ID should be silently skipped; valid folderC is kept.
+	ids, err := repo.ListFolderIDsWithDescendants(context.Background(), tenantID, kbID, []string{uuid.New().String(), folderC})
+	require.NoError(t, err)
+	assert.Equal(t, []string{folderC}, ids, "non-existent ID must be skipped, valid ID must remain")
+}
+
+func TestListFolderIDsWithDescendants_EmptyInput(t *testing.T) {
+	db := setupKnowledgeFolderTestDB(t)
+	tenantID, kbID, _, _, _ := seedKnowledgeFolderFixture(t, db)
+	repo := NewKnowledgeRepository(db)
+
+	ids, err := repo.ListFolderIDsWithDescendants(context.Background(), tenantID, kbID, []string{})
+	require.NoError(t, err)
+	assert.Nil(t, ids, "empty input should return nil")
+}
+
 // helper to build a minimal KnowledgeFolder for repo tests.
 func newFolder(tenantID uint64, kbID, name string, parentID *string) *types.KnowledgeFolder {
 	f := &types.KnowledgeFolder{
@@ -378,4 +436,104 @@ func newFolder(tenantID uint64, kbID, name string, parentID *string) *types.Know
 		f.Path = "/" + f.ID + "/"
 	}
 	return f
+}
+
+// --- ResolveFolderNames tests ---
+
+func TestResolveFolderNames_ExactMatch(t *testing.T) {
+	db := setupKnowledgeFolderTestDB(t)
+	tenantID, kbID, rootFolderA, _, _ := seedKnowledgeFolderFixture(t, db)
+	repo := NewKnowledgeRepository(db)
+
+	ids, err := repo.ResolveFolderNames(context.Background(), tenantID, kbID, []string{"FolderA"})
+	require.NoError(t, err)
+	assert.Contains(t, ids, rootFolderA)
+}
+
+func TestResolveFolderNames_CaseInsensitive(t *testing.T) {
+	db := setupKnowledgeFolderTestDB(t)
+	tenantID, kbID, rootFolderA, _, folderC := seedKnowledgeFolderFixture(t, db)
+	repo := NewKnowledgeRepository(db)
+
+	tests := []struct {
+		name      string
+		input     []string
+		expectIDs []string
+	}{
+		{"lowercase", []string{"foldera"}, []string{rootFolderA}},
+		{"uppercase", []string{"FOLDERC"}, []string{folderC}},
+		{"mixed case", []string{"fOlDeRa"}, []string{rootFolderA}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ids, err := repo.ResolveFolderNames(context.Background(), tenantID, kbID, tt.input)
+			require.NoError(t, err)
+			assert.ElementsMatch(t, tt.expectIDs, ids)
+		})
+	}
+}
+
+func TestResolveFolderNames_NoMatch(t *testing.T) {
+	db := setupKnowledgeFolderTestDB(t)
+	tenantID, kbID, _, _, _ := seedKnowledgeFolderFixture(t, db)
+	repo := NewKnowledgeRepository(db)
+
+	ids, err := repo.ResolveFolderNames(context.Background(), tenantID, kbID, []string{"NonExistent"})
+	require.NoError(t, err)
+	assert.Empty(t, ids)
+}
+
+func TestResolveFolderNames_MultipleFoldersSameName(t *testing.T) {
+	db := setupKnowledgeFolderTestDB(t)
+	tenantID, kbID, rootFolderA, _, _ := seedKnowledgeFolderFixture(t, db)
+	repo := NewKnowledgeRepository(db)
+
+	// Insert a second folder named "FolderA" in the same KB (different parent).
+	dupA := uuid.New().String()
+	require.NoError(t, db.Exec(`
+		INSERT INTO knowledge_folders (id, tenant_id, knowledge_base_id, name, parent_folder_id, path, depth)
+		VALUES (?, ?, ?, 'FolderA', ?, ?, 2)
+	`, dupA, tenantID, kbID, rootFolderA, "/"+rootFolderA+"/"+dupA+"/").Error)
+
+	ids, err := repo.ResolveFolderNames(context.Background(), tenantID, kbID, []string{"FolderA"})
+	require.NoError(t, err)
+	assert.Len(t, ids, 2, "both folders named FolderA must be returned")
+	assert.Contains(t, ids, rootFolderA)
+	assert.Contains(t, ids, dupA)
+}
+
+func TestResolveFolderNames_MultipleNames(t *testing.T) {
+	db := setupKnowledgeFolderTestDB(t)
+	tenantID, kbID, rootFolderA, _, folderC := seedKnowledgeFolderFixture(t, db)
+	repo := NewKnowledgeRepository(db)
+
+	ids, err := repo.ResolveFolderNames(context.Background(), tenantID, kbID, []string{"FolderA", "FolderC"})
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{rootFolderA, folderC}, ids)
+}
+
+func TestResolveFolderNames_EmptyInput(t *testing.T) {
+	db := setupKnowledgeFolderTestDB(t)
+	tenantID, kbID, _, _, _ := seedKnowledgeFolderFixture(t, db)
+	repo := NewKnowledgeRepository(db)
+
+	ids, err := repo.ResolveFolderNames(context.Background(), tenantID, kbID, []string{})
+	require.NoError(t, err)
+	assert.Nil(t, ids)
+}
+
+func TestResolveFolderNames_TenantScoped(t *testing.T) {
+	db := setupKnowledgeFolderTestDB(t)
+	_, kbID, rootFolderA, _, _ := seedKnowledgeFolderFixture(t, db)
+	repo := NewKnowledgeRepository(db)
+
+	// A different tenant should not see tenant-1's folders.
+	ids, err := repo.ResolveFolderNames(context.Background(), 999, kbID, []string{"FolderA"})
+	require.NoError(t, err)
+	assert.Empty(t, ids, "folder resolution must be scoped to tenant")
+
+	// Sanity: tenant 1 does see it.
+	ids, err = repo.ResolveFolderNames(context.Background(), 1, kbID, []string{"FolderA"})
+	require.NoError(t, err)
+	assert.Contains(t, ids, rootFolderA)
 }

@@ -979,3 +979,108 @@ func (r *knowledgeRepository) ListKnowledgeIDsByFolderIDs(
 	}
 	return ids, nil
 }
+
+// ListFolderIDsWithDescendants expands the given folder IDs to include all
+// descendant folder IDs via the materialized path.
+func (r *knowledgeRepository) ListFolderIDsWithDescendants(
+	ctx context.Context,
+	tenantID uint64,
+	kbID string,
+	folderIDs []string,
+) ([]string, error) {
+	if len(folderIDs) == 0 {
+		return nil, nil
+	}
+
+	resolvedIDs := make([]string, 0, len(folderIDs))
+	for _, fid := range folderIDs {
+		if fid == "__root__" {
+			resolvedIDs = append(resolvedIDs, fid)
+			continue
+		}
+		var folder types.KnowledgeFolder
+		if err := r.db.WithContext(ctx).
+			Select("path").
+			Where("id = ?", fid).
+			First(&folder).Error; err != nil {
+			continue
+		}
+		resolvedIDs = append(resolvedIDs, fid)
+		var descendantIDs []string
+		if err := r.db.WithContext(ctx).Model(&types.KnowledgeFolder{}).
+			Where("tenant_id = ? AND knowledge_base_id = ? AND path LIKE ?", tenantID, kbID, folder.Path+"%").
+			Where("id != ?", fid).
+			Pluck("id", &descendantIDs).Error; err != nil {
+			return nil, err
+		}
+		resolvedIDs = append(resolvedIDs, descendantIDs...)
+	}
+	return resolvedIDs, nil
+}
+
+func (r *knowledgeRepository) ResolveFolderNames(
+	ctx context.Context,
+	tenantID uint64,
+	kbID string,
+	names []string,
+) ([]string, error) {
+	if len(names) == 0 {
+		return nil, nil
+	}
+	lowerNames := make([]string, len(names))
+	for i, n := range names {
+		lowerNames[i] = strings.ToLower(n)
+	}
+	var ids []string
+	err := r.db.WithContext(ctx).
+		Model(&types.KnowledgeFolder{}).
+		Where("tenant_id = ? AND knowledge_base_id = ? AND deleted_at IS NULL AND LOWER(name) IN ?",
+			tenantID, kbID, lowerNames).
+		Pluck("id", &ids).Error
+	if err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+func (r *knowledgeRepository) ListFoldersByKB(
+	ctx context.Context,
+	tenantID uint64,
+	kbID string,
+) ([]*types.KnowledgeFolder, error) {
+	var folders []*types.KnowledgeFolder
+	err := r.db.WithContext(ctx).
+		Where("tenant_id = ? AND knowledge_base_id = ? AND deleted_at IS NULL", tenantID, kbID).
+		Order("path").
+		Find(&folders).Error
+	if err != nil {
+		return nil, err
+	}
+	return folders, nil
+}
+
+func (r *knowledgeRepository) CountKnowledgeByFolder(
+	ctx context.Context,
+	tenantID uint64,
+	kbID string,
+) (map[string]int64, error) {
+	var results []struct {
+		FolderID string
+		Count    int64
+	}
+	err := r.db.WithContext(ctx).
+		Model(&types.Knowledge{}).
+		Select("folder_id as folder_id, count(*) as count").
+		Where("tenant_id = ? AND knowledge_base_id = ? AND deleted_at IS NULL AND folder_id IS NOT NULL",
+			tenantID, kbID).
+		Group("folder_id").
+		Scan(&results).Error
+	if err != nil {
+		return nil, err
+	}
+	m := make(map[string]int64, len(results))
+	for _, r := range results {
+		m[r.FolderID] = r.Count
+	}
+	return m, nil
+}

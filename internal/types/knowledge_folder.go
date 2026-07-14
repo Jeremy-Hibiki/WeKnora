@@ -78,3 +78,17 @@ type MoveFolderRequest struct {
 
 // MaxFolderDepth is the maximum allowed nesting depth for folders.
 const MaxFolderDepth = 10
+
+// FolderSummary is a lightweight folder representation for LLM tool consumption.
+type FolderSummary struct {
+	Name          string `json:"name"`
+	Path          string `json:"path"`
+	DocumentCount int64  `json:"document_count"`
+	ChildrenCount int64  `json:"children_count"`
+}
+
+// TagSummary is a lightweight tag representation for LLM tool consumption.
+type TagSummary struct {
+	Name          string `json:"name"`
+	DocumentCount int64  `json:"document_count"`
+}

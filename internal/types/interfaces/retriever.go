@@ -60,6 +60,11 @@ type RetrieveEngineRepository interface {
 	// chunkTagMap: map of chunk ID to tag ID (empty string means no tag)
 	BatchUpdateChunkTagID(ctx context.Context, chunkTagMap map[string]string) error
 
+	// BatchUpdateFolderID updates the folder_id metadata of all chunks belonging
+	// to the given knowledge entries. The map key is knowledge_id, value is
+	// folder_id (empty string means root). No re-embedding occurs.
+	BatchUpdateFolderID(ctx context.Context, knowledgeFolderMap map[string]string) error
+
 	// RetrieveEngine retrieves the engine
 	RetrieveEngine
 }
@@ -135,6 +140,11 @@ type RetrieveEngineService interface {
 	// BatchUpdateChunkTagID updates the tag ID of chunks in batch
 	// chunkTagMap: map of chunk ID to tag ID (empty string means no tag)
 	BatchUpdateChunkTagID(ctx context.Context, chunkTagMap map[string]string) error
+
+	// BatchUpdateFolderID updates the folder_id metadata of all chunks belonging
+	// to the given knowledge entries. The map key is knowledge_id, value is
+	// folder_id (empty string means root). No re-embedding occurs.
+	BatchUpdateFolderID(ctx context.Context, knowledgeFolderMap map[string]string) error
 
 	// RetrieveEngine retrieves the engine
 	RetrieveEngine

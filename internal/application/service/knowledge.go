@@ -934,12 +934,17 @@ func (s *knowledgeService) SearchKnowledgeForScopes(ctx context.Context, scopes 
 // MoveToFolder moves a single knowledge entry to a specified folder or to root.
 func (s *knowledgeService) MoveToFolder(ctx context.Context, knowledgeID string, folderID *string) error {
 	tenantID := types.MustTenantIDFromContext(ctx)
-	// Verify the knowledge entry exists and belongs to the tenant
-	_, err := s.repo.GetKnowledgeByID(ctx, tenantID, knowledgeID)
+	knowledge, err := s.repo.GetKnowledgeByID(ctx, tenantID, knowledgeID)
 	if err != nil {
 		return err
 	}
-	return s.repo.UpdateKnowledgeFolderID(ctx, knowledgeID, folderID)
+	if err := s.repo.UpdateKnowledgeFolderID(ctx, knowledgeID, folderID); err != nil {
+		return err
+	}
+	s.updateVectorFolderMetadata(ctx, knowledge.KnowledgeBaseID, tenantID, map[string]string{
+		knowledgeID: types.FolderIDPtrToString(folderID),
+	})
+	return nil
 }
 
 // BatchMoveToFolder moves multiple knowledge entries to a specified folder or to root.
@@ -948,7 +953,39 @@ func (s *knowledgeService) BatchMoveToFolder(ctx context.Context, kbID string, k
 		return nil
 	}
 	tenantID := types.MustTenantIDFromContext(ctx)
-	return s.repo.BatchUpdateKnowledgeFolderID(ctx, tenantID, kbID, knowledgeIDs, folderID)
+	if err := s.repo.BatchUpdateKnowledgeFolderID(ctx, tenantID, kbID, knowledgeIDs, folderID); err != nil {
+		return err
+	}
+	folderIDStr := types.FolderIDPtrToString(folderID)
+	knowledgeFolderMap := make(map[string]string, len(knowledgeIDs))
+	for _, kid := range knowledgeIDs {
+		knowledgeFolderMap[kid] = folderIDStr
+	}
+	s.updateVectorFolderMetadata(ctx, kbID, tenantID, knowledgeFolderMap)
+	return nil
+}
+
+// updateVectorFolderMetadata updates folder_id metadata in the vector store
+// for the given knowledge entries. Errors are logged and swallowed — the SQL
+// update has already succeeded, and the SQL fallback path ensures search
+// correctness until a reconciliation job fixes the metadata.
+func (s *knowledgeService) updateVectorFolderMetadata(ctx context.Context, kbID string, tenantID uint64, knowledgeFolderMap map[string]string) {
+	if len(knowledgeFolderMap) == 0 {
+		return
+	}
+	kb, err := s.kbService.GetKnowledgeBaseByIDOnly(ctx, kbID)
+	if err != nil || kb == nil {
+		logger.Warnf(ctx, "updateVectorFolderMetadata: failed to get KB %s: %v", kbID, err)
+		return
+	}
+	engine, err := retriever.CreateRetrieveEngineForKB(ctx, s.retrieveEngine, s.ownership, tenantID, kb.VectorStoreID)
+	if err != nil {
+		logger.Warnf(ctx, "updateVectorFolderMetadata: failed to create retrieve engine for KB %s: %v", kbID, err)
+		return
+	}
+	if err := engine.BatchUpdateFolderID(ctx, knowledgeFolderMap); err != nil {
+		logger.Warnf(ctx, "updateVectorFolderMetadata: failed to update folder metadata for KB %s: %v", kbID, err)
+	}
 }
 
 // CountKnowledgeByIDs returns the number of knowledge entries in the given KB and tenant that match the IDs.
@@ -959,4 +996,70 @@ func (s *knowledgeService) CountKnowledgeByIDs(ctx context.Context, tenantID uin
 // ListKnowledgeIDsByFolderIDs returns knowledge IDs belonging to the specified folders.
 func (s *knowledgeService) ListKnowledgeIDsByFolderIDs(ctx context.Context, tenantID uint64, kbID string, folderIDs []string, recursive bool) ([]string, error) {
 	return s.repo.ListKnowledgeIDsByFolderIDs(ctx, tenantID, kbID, folderIDs, recursive)
+}
+
+func (s *knowledgeService) ListFolderIDsWithDescendants(ctx context.Context, tenantID uint64, kbID string, folderIDs []string) ([]string, error) {
+	return s.repo.ListFolderIDsWithDescendants(ctx, tenantID, kbID, folderIDs)
+}
+
+func (s *knowledgeService) ResolveFolderNames(ctx context.Context, tenantID uint64, kbID string, names []string) ([]string, error) {
+	return s.repo.ResolveFolderNames(ctx, tenantID, kbID, names)
+}
+
+func (s *knowledgeService) ResolveTagNames(ctx context.Context, tenantID uint64, kbID string, names []string) ([]string, error) {
+	if len(names) == 0 {
+		return nil, nil
+	}
+	var ids []string
+	for _, name := range names {
+		tag, err := s.tagRepo.GetByName(ctx, tenantID, kbID, name)
+		if err != nil {
+			continue
+		}
+		ids = append(ids, tag.ID)
+	}
+	return ids, nil
+}
+
+func (s *knowledgeService) ListFoldersByKB(ctx context.Context, tenantID uint64, kbID string) ([]types.FolderSummary, error) {
+	folders, err := s.repo.ListFoldersByKB(ctx, tenantID, kbID)
+	if err != nil {
+		return nil, err
+	}
+	counts, err := s.repo.CountKnowledgeByFolder(ctx, tenantID, kbID)
+	if err != nil {
+		return nil, err
+	}
+	childCounts := make(map[string]int64)
+	for _, f := range folders {
+		if f.ParentFolderID != nil {
+			childCounts[*f.ParentFolderID]++
+		}
+	}
+	result := make([]types.FolderSummary, 0, len(folders))
+	for _, f := range folders {
+		result = append(result, types.FolderSummary{
+			Name:          f.Name,
+			Path:          f.Path,
+			DocumentCount: counts[f.ID],
+			ChildrenCount: childCounts[f.ID],
+		})
+	}
+	return result, nil
+}
+
+func (s *knowledgeService) ListTagsByKB(ctx context.Context, tenantID uint64, kbID string) ([]types.TagSummary, error) {
+	tags, _, err := s.tagRepo.ListByKB(ctx, tenantID, kbID, nil, "")
+	if err != nil {
+		return nil, err
+	}
+	result := make([]types.TagSummary, 0, len(tags))
+	for _, tag := range tags {
+		knowledgeCount, _, _ := s.tagRepo.CountReferences(ctx, tenantID, kbID, tag.ID)
+		result = append(result, types.TagSummary{
+			Name:          tag.Name,
+			DocumentCount: knowledgeCount,
+		})
+	}
+	return result, nil
 }

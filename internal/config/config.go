@@ -159,6 +159,11 @@ type ServerConfig struct {
 	Host            string        `yaml:"host"             json:"host"`
 	LogPath         string        `yaml:"log_path"         json:"log_path"`
 	ShutdownTimeout time.Duration `yaml:"shutdown_timeout" json:"shutdown_timeout" default:"30s"`
+	// AutoBackfillFolderMetadata, when true, runs the folder_id vector-store
+	// metadata backfill once during startup (best-effort, non-blocking). The
+	// flag defaults to false so existing deployments opt in explicitly.
+	// Env: WEKNORA_SERVER_AUTO_BACKFILL_FOLDER_METADATA.
+	AutoBackfillFolderMetadata bool `yaml:"auto_backfill_folder_metadata" json:"auto_backfill_folder_metadata"`
 }
 
 // KnowledgeBaseConfig 知识库配置

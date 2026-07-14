@@ -539,6 +539,7 @@ func (s *knowledgeService) processChunks(ctx context.Context,
 				ChunkID:         chunk.ID,
 				KnowledgeID:     knowledge.ID,
 				KnowledgeBaseID: knowledge.KnowledgeBaseID,
+				FolderID:        knowledge.GetFolderID(),
 				IsEnabled:       true,
 			})
 		}
@@ -1170,6 +1171,7 @@ func (s *knowledgeService) ProcessSummaryGeneration(ctx context.Context, t *asyn
 			ChunkID:         summaryChunk.ID,
 			KnowledgeID:     knowledge.ID,
 			KnowledgeBaseID: knowledge.KnowledgeBaseID,
+			FolderID:        knowledge.GetFolderID(),
 			IsEnabled:       true,
 		}}
 
@@ -1356,6 +1358,7 @@ func (s *knowledgeService) ProcessParentSummaryGeneration(ctx context.Context, t
 				ChunkID:         parentChunkID,
 				KnowledgeID:     payload.KnowledgeID,
 				KnowledgeBaseID: payload.KnowledgeBaseID,
+				FolderID:        knowledge.GetFolderID(),
 				IsEnabled:       true,
 			}
 			indexInfoList = append(indexInfoList, indexInfo)
@@ -1755,6 +1758,7 @@ func (s *knowledgeService) processQuestionGenerationForKnowledge(ctx context.Con
 				ChunkID:         chunk.ID,
 				KnowledgeID:     knowledge.ID,
 				KnowledgeBaseID: knowledge.KnowledgeBaseID,
+				FolderID:        knowledge.GetFolderID(),
 				IsEnabled:       true,
 			})
 		}
@@ -2579,6 +2583,17 @@ func (s *knowledgeService) updateChunkVector(ctx context.Context, kbID string, c
 		return err
 	}
 
+	// Resolve folder_id from the first chunk's knowledge entry
+	var folderID string
+	for _, chunk := range chunks {
+		if chunk.KnowledgeID != "" {
+			if knowledge, err := s.repo.GetKnowledgeByID(ctx, types.MustTenantIDFromContext(ctx), chunk.KnowledgeID); err == nil && knowledge != nil {
+				folderID = knowledge.GetFolderID()
+			}
+			break
+		}
+	}
+
 	// Initialize composite retrieve engine from tenant configuration
 	indexInfo := make([]*types.IndexInfo, 0, len(chunks))
 	ids := make([]string, 0, len(chunks))
@@ -2594,6 +2609,7 @@ func (s *knowledgeService) updateChunkVector(ctx context.Context, kbID string, c
 			ChunkID:         chunk.ID,
 			KnowledgeID:     chunk.KnowledgeID,
 			KnowledgeBaseID: chunk.KnowledgeBaseID,
+			FolderID:        folderID,
 			IsEnabled:       true,
 		})
 		ids = append(ids, chunk.ID)
@@ -3575,6 +3591,7 @@ func (s *knowledgeService) enqueueImageMultimodalTasks(
 			TenantID:        knowledge.TenantID,
 			KnowledgeID:     knowledge.ID,
 			KnowledgeBaseID: kb.ID,
+			FolderID:        knowledge.GetFolderID(),
 			ChunkID:         chunkID,
 			ImageURL:        img.ServingURL,
 			EnableOCR:       true,

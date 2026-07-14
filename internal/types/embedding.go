@@ -36,6 +36,7 @@ type IndexInfo struct {
 	KnowledgeBaseID string     // ID of the knowledge base
 	KnowledgeType   string     // Type of the knowledge (e.g., "faq", "manual")
 	TagID           string     // Tag ID for categorization (used for FAQ priority filtering)
+	FolderID        string     // Folder ID for vector-store-level metadata filtering (empty = root)
 	IsEnabled       bool       // Whether the chunk is enabled for retrieval
 	IsRecommended   bool       // Whether the chunk is recommended
 }

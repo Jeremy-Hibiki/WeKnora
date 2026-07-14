@@ -423,6 +423,12 @@ func (s *knowledgeFolderService) MoveFolder(
 
 	logger.Infof(ctx, "[Folder] Moved folder %s (id=%s, kb=%s) from %s to %s",
 		name, id, kbIDForLog, oldPath, newPath)
+
+	// Note: No vector metadata update is needed here. MoveSubtree changes the
+	// materialized path of folder records, but folder IDs (UUIDs) remain the
+	// same. Knowledge entries reference folders by UUID (folder_id column),
+	// and vector store metadata stores the same UUID. So folder moves do not
+	// invalidate any vector store folder_id metadata.
 	return updated, nil
 }
 

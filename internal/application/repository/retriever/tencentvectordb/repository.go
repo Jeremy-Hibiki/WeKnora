@@ -235,6 +235,22 @@ func (r *repository) BatchUpdateChunkTagID(ctx context.Context, chunkTagMap map[
 	return nil
 }
 
+func (r *repository) BatchUpdateFolderID(ctx context.Context, knowledgeFolderMap map[string]string) error {
+	if len(knowledgeFolderMap) == 0 {
+		return nil
+	}
+	grouped := make(map[string][]string)
+	for knowledgeID, folderID := range knowledgeFolderMap {
+		grouped[folderID] = append(grouped[folderID], knowledgeID)
+	}
+	for folderID, knowledgeIDs := range grouped {
+		if err := r.updateKnowledgeFields(ctx, knowledgeIDs, map[string]tcvectordb.Field{fieldFolderID: {Val: folderID}}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (r *repository) Retrieve(ctx context.Context, params types.RetrieveParams) ([]*types.RetrieveResult, error) {
 	switch params.RetrieverType {
 	case types.VectorRetrieverType:
@@ -421,6 +437,7 @@ func (r *repository) ensureCollection(ctx context.Context, dimension int) error 
 			{FieldName: fieldKnowledgeID, FieldType: tcvectordb.String, IndexType: tcvectordb.FILTER},
 			{FieldName: fieldKnowledgeBaseID, FieldType: tcvectordb.String, IndexType: tcvectordb.FILTER},
 			{FieldName: fieldTagID, FieldType: tcvectordb.String, IndexType: tcvectordb.FILTER},
+			{FieldName: fieldFolderID, FieldType: tcvectordb.String, IndexType: tcvectordb.FILTER},
 			{FieldName: fieldIsEnabled, FieldType: tcvectordb.Uint64, IndexType: tcvectordb.FILTER},
 		},
 	}
@@ -488,6 +505,27 @@ func (r *repository) updateChunkFields(ctx context.Context, chunkIDs []string, f
 	return nil
 }
 
+func (r *repository) updateKnowledgeFields(ctx context.Context, knowledgeIDs []string, fields map[string]tcvectordb.Field) error {
+	collections, err := r.client.Database(r.databaseName).ListCollection(ctx)
+	if err != nil {
+		return fmt.Errorf("tencent vectordb list collections: %w", err)
+	}
+
+	for _, collection := range collections.Collections {
+		if !r.matchesCollection(collection.CollectionName) {
+			continue
+		}
+		_, err := r.client.Database(r.databaseName).Collection(collection.CollectionName).Update(ctx, tcvectordb.UpdateDocumentParams{
+			QueryFilter:  tcvectordb.NewFilter(tcvectordb.In(fieldKnowledgeID, knowledgeIDs)),
+			UpdateFields: fields,
+		})
+		if err != nil {
+			return fmt.Errorf("tencent vectordb update knowledge fields in %s: %w", collection.CollectionName, err)
+		}
+	}
+	return nil
+}
+
 func (r *repository) collectionName(dimension int) string {
 	if !r.useDimensionSuffix {
 		return r.collectionBaseName
@@ -513,6 +551,9 @@ func (r *repository) baseFilter(params types.RetrieveParams) *tcvectordb.Filter 
 	}
 	if len(params.KnowledgeIDs) > 0 {
 		conditions = append(conditions, tcvectordb.In(fieldKnowledgeID, params.KnowledgeIDs))
+	}
+	if len(params.FolderIDs) > 0 {
+		conditions = append(conditions, tcvectordb.In(fieldFolderID, params.FolderIDs))
 	}
 	if len(params.TagIDs) > 0 {
 		conditions = append(conditions, tcvectordb.In(fieldTagID, params.TagIDs))
@@ -581,6 +622,7 @@ func toVectorEmbedding(indexInfo *types.IndexInfo, params map[string]any) *vecto
 		KnowledgeID:     indexInfo.KnowledgeID,
 		KnowledgeBaseID: indexInfo.KnowledgeBaseID,
 		TagID:           indexInfo.TagID,
+		FolderID:        indexInfo.FolderID,
 		IsEnabled:       indexInfo.IsEnabled,
 	}
 	if embedding.ID == "" {
@@ -699,6 +741,7 @@ func toDocument(embedding *vectorEmbedding) tcvectordb.Document {
 			fieldKnowledgeID:     {Val: embedding.KnowledgeID},
 			fieldKnowledgeBaseID: {Val: embedding.KnowledgeBaseID},
 			fieldTagID:           {Val: embedding.TagID},
+			fieldFolderID:        {Val: embedding.FolderID},
 			fieldIsEnabled:       {Val: boolToUint64(embedding.IsEnabled)},
 		},
 	}
@@ -714,6 +757,7 @@ func fromDocument(doc tcvectordb.Document) *vectorEmbedding {
 		KnowledgeID:     fieldString(doc, fieldKnowledgeID),
 		KnowledgeBaseID: fieldString(doc, fieldKnowledgeBaseID),
 		TagID:           fieldString(doc, fieldTagID),
+		FolderID:        fieldString(doc, fieldFolderID),
 		Embedding:       doc.Vector,
 		SparseVector:    doc.SparseVector,
 		IsEnabled:       fieldUint64(doc, fieldIsEnabled) == 1,
@@ -747,6 +791,7 @@ func outputFields() []string {
 		fieldKnowledgeID,
 		fieldKnowledgeBaseID,
 		fieldTagID,
+		fieldFolderID,
 		fieldIsEnabled,
 	}
 }

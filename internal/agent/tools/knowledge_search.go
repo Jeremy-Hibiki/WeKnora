@@ -72,6 +72,12 @@ Avoid:
 - queries (required): 1–5 semantic questions or conceptual statements.
   These should reflect the meaning or topic you want embeddings to capture.
 - knowledge_base_ids (optional): limit the search scope.
+- folders (optional): folder names to scope the search (e.g. ["Go", "API"]).
+  Use list_folders to discover available names. Case-insensitive.
+- tags (optional): tag names to filter by (e.g. ["important"]).
+  Use list_tags to discover available names. Case-insensitive.
+- include_subfolders (optional, default true): when true, folder scope
+  includes all descendant subfolders.
 
 ## Output
 Returns chunks ranked by semantic similarity, reranked when applicable.  
@@ -96,6 +102,27 @@ Results represent conceptual relevance, not literal keyword overlap.`,
       },
       "minItems": 0,
       "maxItems": 10
+    },
+    "folders": {
+      "type": "array",
+      "description": "Optional: folder names to scope the search (e.g. [\"Go\", \"API\"]). Use list_folders to discover names. Case-insensitive.",
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 10
+    },
+    "tags": {
+      "type": "array",
+      "description": "Optional: tag names to filter by (e.g. [\"important\"]). Use list_tags to discover names. Case-insensitive.",
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 10
+    },
+    "include_subfolders": {
+      "type": "boolean",
+      "description": "When true (default), folder scope includes all descendant subfolders.",
+      "default": true
     }
   },
   "required": ["queries"]
@@ -104,8 +131,11 @@ Results represent conceptual relevance, not literal keyword overlap.`,
 
 // KnowledgeSearchInput defines the input parameters for knowledge search tool
 type KnowledgeSearchInput struct {
-	Queries          []string `json:"queries"`
-	KnowledgeBaseIDs []string `json:"knowledge_base_ids,omitempty"`
+	Queries           []string `json:"queries"`
+	KnowledgeBaseIDs  []string `json:"knowledge_base_ids,omitempty"`
+	Folders           []string `json:"folders,omitempty"`
+	Tags              []string `json:"tags,omitempty"`
+	IncludeSubfolders *bool    `json:"include_subfolders,omitempty"`
 }
 
 // searchResultWithMeta wraps search result with metadata about which query matched it
@@ -211,6 +241,11 @@ func (t *KnowledgeSearchTool) Execute(ctx context.Context, args json.RawMessage)
 
 	kbIDs := searchTargets.GetAllKnowledgeBaseIDs()
 	logger.Infof(ctx, "[Tool][KnowledgeSearch] Using %d search targets across %d KBs", len(searchTargets), len(kbIDs))
+
+	// Resolve LLM-provided folder/tag names to IDs within the KB scope.
+	// The resolved IDs are set onto the search targets so the existing
+	// SearchParams builder picks them up.
+	t.resolveFolderTagScope(ctx, input, kbIDs, searchTargets)
 
 	// Parse query parameter
 	queries := input.Queries
@@ -396,6 +431,58 @@ func (t *KnowledgeSearchTool) Execute(ctx context.Context, args json.RawMessage)
 	return result, nil
 }
 
+// resolveFolderTagScope resolves LLM-provided folder/tag names to IDs within
+// the KB scope and sets the resolved IDs onto the search targets so the
+// existing SearchParams builder picks them up. When neither folders nor tags
+// are provided, this is a no-op (backward-compatible default behavior).
+func (t *KnowledgeSearchTool) resolveFolderTagScope(
+	ctx context.Context,
+	input KnowledgeSearchInput,
+	kbIDs []string,
+	searchTargets types.SearchTargets,
+) {
+	if len(input.Folders) == 0 && len(input.Tags) == 0 {
+		return
+	}
+	tenantID := types.MustTenantIDFromContext(ctx)
+	var resolvedFolderIDs, resolvedTagIDs []string
+	for _, kbID := range kbIDs {
+		if len(input.Folders) > 0 {
+			ids, err := t.knowledgeService.ResolveFolderNames(ctx, tenantID, kbID, input.Folders)
+			if err != nil {
+				logger.Warnf(ctx, "[Tool][KnowledgeSearch] Failed to resolve folder names for KB %s: %v", kbID, err)
+			} else {
+				resolvedFolderIDs = append(resolvedFolderIDs, ids...)
+			}
+		}
+		if len(input.Tags) > 0 {
+			ids, err := t.knowledgeService.ResolveTagNames(ctx, tenantID, kbID, input.Tags)
+			if err != nil {
+				logger.Warnf(ctx, "[Tool][KnowledgeSearch] Failed to resolve tag names for KB %s: %v", kbID, err)
+			} else {
+				resolvedTagIDs = append(resolvedTagIDs, ids...)
+			}
+		}
+	}
+	includeSubfolders := true
+	if input.IncludeSubfolders != nil {
+		includeSubfolders = *input.IncludeSubfolders
+	}
+	for _, st := range searchTargets {
+		if len(resolvedFolderIDs) > 0 {
+			st.FolderIDs = resolvedFolderIDs
+			st.IncludeSubfolders = includeSubfolders
+		}
+		if len(resolvedTagIDs) > 0 {
+			if len(st.TagIDs) == 0 {
+				st.TagIDs = resolvedTagIDs
+			} else {
+				st.TagIDs = append(st.TagIDs, resolvedTagIDs...)
+			}
+		}
+	}
+}
+
 // getKnowledgeBaseTypes fetches knowledge base types for the given IDs
 func (t *KnowledgeSearchTool) getKnowledgeBaseTypes(ctx context.Context, kbIDs []string) map[string]string {
 	kbTypeMap := make(map[string]string, len(kbIDs))
@@ -565,14 +652,14 @@ func (t *KnowledgeSearchTool) concurrentSearchByTargets(
 					go func() {
 						defer innerWg.Done()
 						searchParams := types.SearchParams{
-							QueryText:        q,
-							QueryEmbedding:   queryEmbedding,
-							MatchCount:       topK,
-							VectorThreshold:  vectorThreshold,
-							KeywordThreshold: keywordThreshold,
-							KnowledgeIDs:     st.KnowledgeIDs,
-							TagIDs:           st.TagIDs,
-							FolderIDs:        st.FolderIDs,
+							QueryText:         q,
+							QueryEmbedding:    queryEmbedding,
+							MatchCount:        topK,
+							VectorThreshold:   vectorThreshold,
+							KeywordThreshold:  keywordThreshold,
+							KnowledgeIDs:      st.KnowledgeIDs,
+							TagIDs:            st.TagIDs,
+							FolderIDs:         st.FolderIDs,
 							IncludeSubfolders: st.IncludeSubfolders,
 						}
 						kbResults, err := t.knowledgeBaseService.HybridSearch(ctx, st.KnowledgeBaseID, searchParams)

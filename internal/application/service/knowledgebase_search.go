@@ -203,9 +203,9 @@ func (s *knowledgeBaseService) HybridSearch(ctx context.Context,
 			"group_count":            len(groups),
 		},
 		Metadata: map[string]interface{}{
-			"primary_kb_id":      kb.ID,
-			"primary_kb_type":    string(kb.Type),
-			"embedding_model_id": kb.EmbeddingModelID,
+			"primary_kb_id":       kb.ID,
+			"primary_kb_type":     string(kb.Type),
+			"embedding_model_id":  kb.EmbeddingModelID,
 			"has_query_embedding": len(params.QueryEmbedding) > 0,
 		},
 	})
@@ -324,34 +324,34 @@ func (s *knowledgeBaseService) buildRetrievalParams(
 	currentTenantID := types.MustTenantIDFromContext(ctx)
 	var retrieveParams []types.RetrieveParams
 
-	// Resolve FolderIDs to KnowledgeIDs before building retrieval params.
-	// This avoids touching every vector store engine: we simply restrict the
-	// existing KnowledgeIDs filter, which all engines already support.
-	mergedKnowledgeIDs := params.KnowledgeIDs
+	// Resolve folder scoping. We pass folder IDs directly to the vector engine
+	// as a metadata filter (RetrieveParams.FolderIDs), avoiding the SQL
+	// round-trip to expand folder IDs → knowledge IDs. For include_subfolders,
+	// we expand the folder IDs to include descendants via a single SQL query
+	// that returns a small set of folder UUIDs (not knowledge IDs).
+	var resolvedFolderIDs []string
 	if len(params.FolderIDs) > 0 {
-		var folderKnowledgeIDs []string
-		for _, kb := range groupKBs {
-			tenantID := kb.TenantID
-			if tenantID == 0 {
-				tenantID = currentTenantID
+		if params.IncludeSubfolders {
+			for _, kb := range groupKBs {
+				tenantID := kb.TenantID
+				if tenantID == 0 {
+					tenantID = currentTenantID
+				}
+				ids, err := s.kgRepo.ListFolderIDsWithDescendants(
+					ctx, tenantID, kb.ID, params.FolderIDs,
+				)
+				if err != nil {
+					logger.Warnf(ctx, "Failed to expand folder IDs with descendants for KB %s: %v", kb.ID, err)
+					continue
+				}
+				resolvedFolderIDs = append(resolvedFolderIDs, ids...)
 			}
-			ids, err := s.kgRepo.ListKnowledgeIDsByFolderIDs(
-				ctx, tenantID, kb.ID, params.FolderIDs, params.IncludeSubfolders,
-			)
-			if err != nil {
-				logger.Warnf(ctx, "Failed to resolve folder IDs to knowledge IDs for KB %s: %v", kb.ID, err)
-				continue
-			}
-			folderKnowledgeIDs = append(folderKnowledgeIDs, ids...)
-		}
-		mergedKnowledgeIDs = mergeKnowledgeIDs(params.KnowledgeIDs, folderKnowledgeIDs)
-		if len(mergedKnowledgeIDs) == 0 && len(params.FolderIDs) > 0 {
-			// Folder filtering was requested but matched zero knowledge entries.
-			// Return empty params so the caller can short-circuit retrieval.
-			logger.Infof(ctx, "Folder filtering produced empty knowledge ID set; skipping retrieval")
-			return nil, nil
+		} else {
+			resolvedFolderIDs = params.FolderIDs
 		}
 	}
+
+	mergedKnowledgeIDs := params.KnowledgeIDs
 
 	// Partition the group's KBs by index routing. A KB that does not have
 	// vector indexing enabled (e.g. wiki-only or graph-only KBs) has no
@@ -396,6 +396,7 @@ func (s *knowledgeBaseService) buildRetrievalParams(
 				Threshold:        params.VectorThreshold,
 				RetrieverType:    types.VectorRetrieverType,
 				KnowledgeIDs:     mergedKnowledgeIDs,
+				FolderIDs:        resolvedFolderIDs,
 				TagIDs:           params.TagIDs,
 				KnowledgeType:    knowledgeType,
 			})
@@ -425,6 +426,7 @@ func (s *knowledgeBaseService) buildRetrievalParams(
 			Threshold:        params.KeywordThreshold,
 			RetrieverType:    types.KeywordsRetrieverType,
 			KnowledgeIDs:     mergedKnowledgeIDs,
+			FolderIDs:        resolvedFolderIDs,
 			TagIDs:           params.TagIDs,
 		})
 		logger.Info(ctx, "Keyword retrieval parameters setup completed")

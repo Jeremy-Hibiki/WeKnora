@@ -22,6 +22,7 @@ type pgVector struct {
 	KnowledgeID     string              `json:"knowledge_id"      gorm:"column:knowledge_id"`
 	KnowledgeBaseID string              `json:"knowledge_base_id" gorm:"column:knowledge_base_id"`
 	TagID           string              `json:"tag_id"            gorm:"column:tag_id;index"`
+	FolderID        string              `json:"folder_id"         gorm:"column:folder_id;type:varchar(36);default:''"`
 	Content         string              `json:"content"           gorm:"column:content;not null"`
 	Dimension       int                 `json:"dimension"         gorm:"column:dimension;not null"`
 	Embedding       pgvector.HalfVector `json:"embedding"         gorm:"column:embedding;not null"`
@@ -65,6 +66,7 @@ func toDBVectorEmbedding(indexInfo *types.IndexInfo, additionalParams map[string
 		KnowledgeID:     indexInfo.KnowledgeID,
 		KnowledgeBaseID: indexInfo.KnowledgeBaseID,
 		TagID:           indexInfo.TagID,
+		FolderID:        indexInfo.FolderID,
 		Content:         common.CleanInvalidUTF8(indexInfo.Content),
 		IsEnabled:       indexInfo.IsEnabled,
 	}

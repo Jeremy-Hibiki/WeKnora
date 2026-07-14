@@ -414,6 +414,9 @@ func (f *fakeRetrieveEngineService) BatchUpdateChunkEnabledStatus(context.Contex
 func (f *fakeRetrieveEngineService) BatchUpdateChunkTagID(context.Context, map[string]string) error {
 	panic("unused")
 }
+func (f *fakeRetrieveEngineService) BatchUpdateFolderID(context.Context, map[string]string) error {
+	panic("unused")
+}
 
 var _ interfaces.RetrieveEngineService = (*fakeRetrieveEngineService)(nil)
 

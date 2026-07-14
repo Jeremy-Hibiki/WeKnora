@@ -23,6 +23,7 @@ const (
 	fieldKnowledgeID      = "knowledge_id"
 	fieldKnowledgeBaseID  = "knowledge_base_id"
 	fieldTagID            = "tag_id"
+	fieldFolderID         = "folder_id"
 	fieldEmbedding        = "embedding"
 	fieldIsEnabled        = "is_enabled"
 )
@@ -486,6 +487,58 @@ func (q *qdrantRepository) BatchUpdateChunkTagID(ctx context.Context, chunkTagMa
 	return nil
 }
 
+// BatchUpdateFolderID updates the folder ID of chunks in batch
+func (q *qdrantRepository) BatchUpdateFolderID(ctx context.Context, knowledgeFolderMap map[string]string) error {
+	log := logger.GetLogger(ctx)
+	if len(knowledgeFolderMap) == 0 {
+		log.Warn("[Qdrant] Empty knowledge folder map provided, skipping")
+		return nil
+	}
+
+	log.Infof("[Qdrant] Batch updating folder ID, count: %d", len(knowledgeFolderMap))
+
+	// Get all collections that match our base name pattern
+	collections, err := q.client.ListCollections(ctx)
+	if err != nil {
+		log.Errorf("[Qdrant] Failed to list collections: %v", err)
+		return fmt.Errorf("failed to list collections: %w", err)
+	}
+
+	// Group knowledge IDs by folder ID for batch updates
+	folderGroups := make(map[string][]string)
+	for knowledgeID, folderID := range knowledgeFolderMap {
+		folderGroups[folderID] = append(folderGroups[folderID], knowledgeID)
+	}
+
+	// Update in all matching collections
+	for _, collectionName := range collections {
+		// Only process collections that start with our base name
+		if len(collectionName) <= len(q.collectionBaseName) ||
+			collectionName[:len(q.collectionBaseName)] != q.collectionBaseName {
+			continue
+		}
+
+		// Update chunks for each folder ID
+		for folderID, knowledgeIDs := range folderGroups {
+			_, err := q.client.SetPayload(ctx, &qdrant.SetPayloadPoints{
+				CollectionName: collectionName,
+				Payload:        qdrant.NewValueMap(map[string]any{fieldFolderID: folderID}),
+				PointsSelector: qdrant.NewPointsSelectorFilter(&qdrant.Filter{
+					Must: []*qdrant.Condition{
+						qdrant.NewMatchKeywords(fieldKnowledgeID, knowledgeIDs...),
+					},
+				}),
+			})
+			if err != nil {
+				log.Warnf("[Qdrant] Failed to update chunks with folder_id %s in %s: %v", folderID, collectionName, err)
+			}
+		}
+	}
+
+	log.Infof("[Qdrant] Batch update folder ID completed")
+	return nil
+}
+
 func (q *qdrantRepository) getBaseFilter(params types.RetrieveParams) *qdrant.Filter {
 	must := make([]*qdrant.Condition, 0)
 	mustNot := make([]*qdrant.Condition, 0)
@@ -502,6 +555,10 @@ func (q *qdrantRepository) getBaseFilter(params types.RetrieveParams) *qdrant.Fi
 	}
 	if len(params.KnowledgeIDs) > 0 {
 		must = append(must, qdrant.NewMatchKeywords(fieldKnowledgeID, params.KnowledgeIDs...))
+	}
+	// Filter by folder IDs if specified
+	if len(params.FolderIDs) > 0 {
+		must = append(must, qdrant.NewMatchKeywords(fieldFolderID, params.FolderIDs...))
 	}
 	// Filter by tag IDs if specified
 	if len(params.TagIDs) > 0 {
@@ -877,6 +934,7 @@ func createPayload(embedding *QdrantVectorEmbedding) map[string]*qdrant.Value {
 		fieldKnowledgeID:     embedding.KnowledgeID,
 		fieldKnowledgeBaseID: embedding.KnowledgeBaseID,
 		fieldTagID:           embedding.TagID,
+		fieldFolderID:        embedding.FolderID,
 		fieldIsEnabled:       embedding.IsEnabled,
 	}
 	return qdrant.NewValueMap(payload)
@@ -936,6 +994,7 @@ func toQdrantVectorEmbedding(embedding *types.IndexInfo, additionalParams map[st
 		KnowledgeID:     embedding.KnowledgeID,
 		KnowledgeBaseID: embedding.KnowledgeBaseID,
 		TagID:           embedding.TagID,
+		FolderID:        embedding.FolderID,
 		IsEnabled:       embedding.IsEnabled,
 	}
 	if additionalParams != nil {

@@ -109,6 +109,10 @@ func (f *fakeEngine) BatchUpdateChunkTagID(ctx context.Context, _ map[string]str
 	panic("fakeEngine.BatchUpdateChunkTagID: not used in factory tests")
 }
 
+func (f *fakeEngine) BatchUpdateFolderID(ctx context.Context, _ map[string]string) error {
+	panic("fakeEngine.BatchUpdateFolderID: not used in factory tests")
+}
+
 // registryWithStores builds a registry with the given storeID → service
 // pairs populated in the byStoreID map. Engine-type entries are also
 // registered so that the unbound path can resolve engines via the

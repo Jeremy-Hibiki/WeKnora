@@ -25,6 +25,7 @@ const (
 	fieldKnowledgeID     = "knowledge_id"
 	fieldKnowledgeBaseID = "knowledge_base_id"
 	fieldTagID           = "tag_id"
+	fieldFolderID        = "folder_id"
 	fieldIsEnabled       = "is_enabled"
 )
 
@@ -50,6 +51,7 @@ type vectorEmbedding struct {
 	KnowledgeID     string
 	KnowledgeBaseID string
 	TagID           string
+	FolderID        string
 	Embedding       []float32
 	SparseVector    []encoder.SparseVecItem
 	IsEnabled       bool

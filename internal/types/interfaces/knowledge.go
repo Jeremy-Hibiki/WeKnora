@@ -216,6 +216,28 @@ type KnowledgeService interface {
 	// When recursive is true, it also includes knowledge from all descendant subfolders.
 	// Use "__root__" as a folderID to include knowledge with folder_id IS NULL.
 	ListKnowledgeIDsByFolderIDs(ctx context.Context, tenantID uint64, kbID string, folderIDs []string, recursive bool) ([]string, error)
+	// ListFolderIDsWithDescendants expands the given folder IDs to include all
+	// descendant folder IDs via the materialized path. Returns the input IDs
+	// plus all descendants. Non-existent or deleted folder IDs are silently
+	// skipped. The "__root__" sentinel is returned as-is.
+	ListFolderIDsWithDescendants(ctx context.Context, tenantID uint64, kbID string, folderIDs []string) ([]string, error)
+	// BackfillFolderMetadata backfills folder_id metadata in vector stores
+	// for existing chunks. If kbID is empty, all knowledge bases across all
+	// tenants are processed; otherwise only the specified KB is processed.
+	// Returns a result with per-KB error details — individual KB failures do
+	// not abort the sweep.
+	BackfillFolderMetadata(ctx context.Context, kbID string) (*types.BackfillResult, error)
+	// ResolveFolderNames resolves human-readable folder names to folder IDs within a KB.
+	// Case-insensitive leaf-name match. Returns all matching folder IDs (union).
+	// Names that don't match any folder are silently skipped.
+	ResolveFolderNames(ctx context.Context, tenantID uint64, kbID string, names []string) ([]string, error)
+	// ResolveTagNames resolves human-readable tag names to tag IDs within a KB.
+	// Case-insensitive match. Returns all matching tag IDs.
+	ResolveTagNames(ctx context.Context, tenantID uint64, kbID string, names []string) ([]string, error)
+	// ListFoldersByKB returns a summary of all folders in a KB for LLM consumption.
+	ListFoldersByKB(ctx context.Context, tenantID uint64, kbID string) ([]types.FolderSummary, error)
+	// ListTagsByKB returns a summary of all tags in a KB for LLM consumption.
+	ListTagsByKB(ctx context.Context, tenantID uint64, kbID string) ([]types.TagSummary, error)
 }
 
 // KnowledgeRepository defines the interface for knowledge repositories.
@@ -321,4 +343,13 @@ type KnowledgeRepository interface {
 		folderIDs []string,
 		recursive bool,
 	) ([]string, error)
+	// ListFolderIDsWithDescendants expands the given folder IDs to include all
+	// descendant folder IDs via the materialized path.
+	ListFolderIDsWithDescendants(ctx context.Context, tenantID uint64, kbID string, folderIDs []string) ([]string, error)
+	// ResolveFolderNames resolves folder names to IDs within a KB (case-insensitive).
+	ResolveFolderNames(ctx context.Context, tenantID uint64, kbID string, names []string) ([]string, error)
+	// ListFoldersByKB returns all folders in a KB.
+	ListFoldersByKB(ctx context.Context, tenantID uint64, kbID string) ([]*types.KnowledgeFolder, error)
+	// CountKnowledgeByKB returns a map from folder_id to knowledge count.
+	CountKnowledgeByFolder(ctx context.Context, tenantID uint64, kbID string) (map[string]int64, error)
 }

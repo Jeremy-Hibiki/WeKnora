@@ -231,6 +231,13 @@ func NewRouter(params RouterParams) *gin.Engine {
 		RegisterInitializationRoutes(v1, params.InitializationHandler, rbacGuards)
 		RegisterSystemRoutes(v1, params.SystemHandler, rbacGuards)
 		RegisterSystemAdminRoutes(v1, params.SystemHandler, params.AuditLogHandler, rbacGuards)
+
+		// Platform-wide admin maintenance (SystemAdmin only). These span
+		// all tenants, so they live outside the per-tenant RBAC matrix.
+		adminMaintenance := v1.Group("/admin", rbacGuards.SystemAdmin())
+		{
+			adminMaintenance.POST("/vector-stores/backfill-folder-metadata", params.KnowledgeHandler.BackfillFolderMetadata)
+		}
 		RegisterMCPServiceRoutes(v1, params.MCPServiceHandler, params.MCPCredentialsHandler, params.MCPOAuthHandler, rbacGuards)
 		RegisterWebSearchRoutes(v1, params.WebSearchHandler, rbacGuards)
 		RegisterWebSearchProviderRoutes(v1, params.WebSearchProviderHandler, params.WebSearchCredentialsHandler, rbacGuards)
