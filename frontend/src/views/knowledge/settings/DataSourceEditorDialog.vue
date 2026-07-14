@@ -405,6 +405,19 @@ const connectorDefs = computed<ConnectorDef[]>(() => [
       { key: 'auth_headers', labelKey: 'datasource.field.authHeaders', placeholder: '', optional: true, hintKey: 'datasource.field.authHeadersHint', fieldType: 'custom_headers' },
     ],
   },
+  {
+    type: 'svn',
+    available: true,
+    docUrl: '',
+    permissionDocUrl: '',
+    permissionPageUrl: '',
+    requiredPermissions: [],
+    fields: [
+      { key: 'repo_url', labelKey: 'datasource.field.repoUrl', placeholder: 'svn://host/repo or https://host/svn', hintKey: 'datasource.field.repoUrlHint' },
+      { key: 'username', labelKey: 'datasource.field.svnUsername', placeholder: '', optional: true },
+      { key: 'password', labelKey: 'datasource.field.svnPassword', placeholder: '', secret: true, optional: true },
+    ],
+  },
 ])
 
 

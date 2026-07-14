@@ -21,6 +21,8 @@ function fallbackText(type: string) {
       return 'N'
     case 'yuque':
       return 'Y'
+    case 'svn':
+      return 'S'
     default:
       return type.slice(0, 1).toUpperCase() || '?'
   }

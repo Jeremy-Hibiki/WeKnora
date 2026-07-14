@@ -31,6 +31,7 @@ const (
 	ChannelNotion           = "notion"            // Notion
 	ChannelYuque            = "yuque"             // Yuque (语雀)
 	ChannelRSS              = "rss"               // RSS / Atom feed
+	ChannelSVN              = "svn"               // SVN repository
 )
 
 // Knowledge parse status constants
