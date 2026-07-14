@@ -2511,6 +2511,7 @@ export default {
       empty: "설정 가능한 시스템 항목이 없습니다",
       badgeRequiresRestart: "재시작 필요",
       badgeSecret: "민감",
+      badgeHighRisk: "고위험",
       badgeOverride: "재정의됨",
       badgeOverrideTooltip: "이 값은 관리자가 DB에 저장하여 환경 변수 및 기본값을 덮어썼습니다.",
       modifiedAt: "마지막 수정: {value}",

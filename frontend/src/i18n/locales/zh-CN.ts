@@ -2523,6 +2523,7 @@ export default {
       empty: "暂无可配置的系统设置",
       badgeRequiresRestart: "需重启",
       badgeSecret: "敏感",
+      badgeHighRisk: "高风险",
       badgeOverride: "已覆盖",
       badgeOverrideTooltip: "该值已由管理员保存到数据库，覆盖了环境变量与默认值",
       modifiedAt: "上次修改：{value}",

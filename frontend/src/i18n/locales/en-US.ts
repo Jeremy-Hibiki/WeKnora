@@ -3535,6 +3535,7 @@ export default {
       empty: 'No configurable system settings available',
       badgeRequiresRestart: 'Restart required',
       badgeSecret: 'Secret',
+      badgeHighRisk: 'High risk',
       badgeOverride: 'Overridden',
       badgeOverrideTooltip: 'This value has been saved to the database by an administrator, overriding the environment variable and built-in default.',
       modifiedAt: 'Last modified: {value}',

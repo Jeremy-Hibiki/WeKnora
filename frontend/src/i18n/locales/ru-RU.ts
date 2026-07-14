@@ -2209,6 +2209,7 @@ export default {
       empty: 'Нет доступных для настройки параметров',
       badgeRequiresRestart: 'Нужен перезапуск',
       badgeSecret: 'Конфиденциально',
+      badgeHighRisk: 'Высокий риск',
       badgeOverride: 'Переопределено',
       badgeOverrideTooltip: 'Это значение сохранено администратором в БД и переопределяет переменную окружения и значение по умолчанию.',
       modifiedAt: 'Последнее изменение: {value}',
