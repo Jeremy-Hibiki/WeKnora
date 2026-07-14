@@ -24,6 +24,8 @@ func (s *suggestedQuestionsAgentService) GetSuggestedQuestions(
 	[]string,
 	[]string,
 	[]string,
+	[]string,
+	bool,
 	int,
 ) ([]types.SuggestedQuestion, error) {
 	return nil, s.err
