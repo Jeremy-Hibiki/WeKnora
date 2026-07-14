@@ -5,6 +5,7 @@ __debug*
 !.env.example
 !.gitignore
 !.github/
+!.openspec.yaml
 
 # 敏感文件
 *.pem
