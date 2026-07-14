@@ -791,6 +791,7 @@ func (s *knowledgeService) CreateKnowledgeFromManual(ctx context.Context,
 		EmbeddingModelID: kb.EmbeddingModelID,
 		FileName:         fileName,
 		FileType:         types.KnowledgeTypeManual,
+		FolderID:         payload.FolderID,
 	}
 	if err := knowledge.SetManualMetadata(meta); err != nil {
 		logger.Errorf(ctx, "Failed to set manual metadata: %v", err)

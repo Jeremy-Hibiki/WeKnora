@@ -207,7 +207,11 @@ type KnowledgeService interface {
 	// MoveToFolder moves a single knowledge entry to a folder.
 	MoveToFolder(ctx context.Context, knowledgeID string, folderID *string) error
 	// BatchMoveToFolder moves multiple knowledge entries to a folder.
-	BatchMoveToFolder(ctx context.Context, knowledgeIDs []string, folderID *string) error
+	BatchMoveToFolder(ctx context.Context, kbID string, knowledgeIDs []string, folderID *string) error
+	// CountKnowledgeByIDs returns the number of knowledge entries owned by the
+	// tenant and KB that match the given IDs. Used to validate batch operations
+	// without loading every row.
+	CountKnowledgeByIDs(ctx context.Context, tenantID uint64, kbID string, knowledgeIDs []string) (int64, error)
 	// ListKnowledgeIDsByFolderIDs returns knowledge IDs that belong to the specified folders.
 	// When recursive is true, it also includes knowledge from all descendant subfolders.
 	// Use "__root__" as a folderID to include knowledge with folder_id IS NULL.
@@ -301,8 +305,12 @@ type KnowledgeRepository interface {
 	// folderID can be nil to move the entry to root.
 	UpdateKnowledgeFolderID(ctx context.Context, knowledgeID string, folderID *string) error
 	// BatchUpdateKnowledgeFolderID moves multiple knowledge entries to a folder.
-	// folderID can be nil to move entries to root.
-	BatchUpdateKnowledgeFolderID(ctx context.Context, knowledgeIDs []string, folderID *string) error
+	// folderID can be nil to move entries to root. The update is scoped by tenant
+	// and KB as a defense-in-depth guard.
+	BatchUpdateKnowledgeFolderID(ctx context.Context, tenantID uint64, kbID string, knowledgeIDs []string, folderID *string) error
+	// CountKnowledgeByIDs returns the number of knowledge entries owned by the
+	// tenant and KB that match the given IDs.
+	CountKnowledgeByIDs(ctx context.Context, tenantID uint64, kbID string, knowledgeIDs []string) (int64, error)
 	// ListKnowledgeIDsByFolderIDs returns knowledge IDs that belong to the specified folders.
 	// When recursive is true, it also includes knowledge from all descendant subfolders.
 	// Use "__root__" as a folderID to include knowledge with folder_id IS NULL.

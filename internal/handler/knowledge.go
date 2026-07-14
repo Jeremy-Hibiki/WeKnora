@@ -593,6 +593,14 @@ func (h *KnowledgeHandler) CreateManualKnowledge(c *gin.Context) {
 		return
 	}
 
+	// Validate folder ownership before creating manual knowledge in a folder.
+	if req.FolderID != nil && *req.FolderID != "" {
+		if err := h.folderService.ValidateFolderOwnership(ctx, effectiveTenantID, kbID, req.FolderID); err != nil {
+			c.Error(errors.NewBadRequestError("folder does not belong to this knowledge base"))
+			return
+		}
+	}
+
 	knowledge, err := h.kgService.CreateKnowledgeFromManual(ctx, kbID, &req, req.Channel)
 	if err != nil {
 		if appErr, ok := errors.IsAppError(err); ok {

@@ -869,8 +869,11 @@ func (r *knowledgeRepository) UpdateKnowledgeFolderID(
 }
 
 // BatchUpdateKnowledgeFolderID moves multiple knowledge entries to a folder or to root.
+// The update is scoped by tenant and KB as a defense-in-depth guard.
 func (r *knowledgeRepository) BatchUpdateKnowledgeFolderID(
 	ctx context.Context,
+	tenantID uint64,
+	kbID string,
 	knowledgeIDs []string,
 	folderID *string,
 ) error {
@@ -878,8 +881,27 @@ func (r *knowledgeRepository) BatchUpdateKnowledgeFolderID(
 		return nil
 	}
 	return r.db.WithContext(ctx).Model(&types.Knowledge{}).
-		Where("id IN ?", knowledgeIDs).
+		Where("tenant_id = ? AND knowledge_base_id = ? AND id IN ?", tenantID, kbID, knowledgeIDs).
 		Update("folder_id", folderID).Error
+}
+
+// CountKnowledgeByIDs returns the number of knowledge entries in the given tenant and KB that match the IDs.
+func (r *knowledgeRepository) CountKnowledgeByIDs(
+	ctx context.Context,
+	tenantID uint64,
+	kbID string,
+	knowledgeIDs []string,
+) (int64, error) {
+	if len(knowledgeIDs) == 0 {
+		return 0, nil
+	}
+	var count int64
+	if err := r.db.WithContext(ctx).Model(&types.Knowledge{}).
+		Where("tenant_id = ? AND knowledge_base_id = ? AND id IN ?", tenantID, kbID, knowledgeIDs).
+		Count(&count).Error; err != nil {
+		return 0, err
+	}
+	return count, nil
 }
 
 // ListKnowledgeIDsByFolderIDs returns knowledge IDs that belong to the specified folders.

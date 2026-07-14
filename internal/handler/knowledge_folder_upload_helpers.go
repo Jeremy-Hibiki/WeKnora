@@ -41,14 +41,20 @@ func isZipArchive(name string) bool {
 	return strings.EqualFold(strings.ToLower(filepath.Ext(name)), ".zip")
 }
 
+// maxDecompressedZipBytes caps the total bytes extracted from a single zip
+// upload to protect against zip bombs and runaway memory usage.
+const maxDecompressedZipBytes = 1 << 30 // 1 GiB
+
 // extractZipToEntries opens the uploaded zip and returns one entry per regular
 // file, re-packaged as a real *multipart.FileHeader (so the downstream service
 // flow — calculateFileHash + SaveFile — works unchanged). Each entry is fully
 // buffered in memory; this is acceptable because individual files are already
 // capped by MAX_FILE_SIZE_MB and the whole upload by maxFolderUploadFiles.
 //
-// Zip Slip (entries that escape via ../) and macOS noise (__MACOSX, ._* ) are
-// filtered out. The returned relPaths are forward-slashed relative paths.
+// The total decompressed bytes are capped at maxDecompressedZipBytes to prevent
+// zip-bomb exhaustion. Zip Slip (entries that escape via ../) and macOS noise
+// (__MACOSX, ._* ) are filtered out. The returned relPaths are forward-slashed
+// relative paths.
 func extractZipToEntries(zipHeader *multipart.FileHeader) ([]*multipart.FileHeader, []string, error) {
 	src, err := zipHeader.Open()
 	if err != nil {
@@ -69,6 +75,7 @@ func extractZipToEntries(zipHeader *multipart.FileHeader) ([]*multipart.FileHead
 		headers   []*multipart.FileHeader
 		relPaths  []string
 		skipCount int
+		extracted int64
 	)
 	for _, f := range zr.File {
 		if f.FileInfo().IsDir() {
@@ -90,10 +97,21 @@ func extractZipToEntries(zipHeader *multipart.FileHeader) ([]*multipart.FileHead
 		if err != nil {
 			return nil, nil, fmt.Errorf("open zip entry %s: %w", rel, err)
 		}
+		// Pre-flight size guard: reject this entry before reading if it would
+		// push the cumulative total past the zip-bomb cap.
+		entrySize := f.UncompressedSize64
+		if extracted+int64(entrySize) > maxDecompressedZipBytes {
+			_ = rc.Close()
+			return nil, nil, fmt.Errorf("zip entry %s: total decompressed size exceeds %d bytes", rel, maxDecompressedZipBytes)
+		}
 		data, err := io.ReadAll(rc)
 		_ = rc.Close()
 		if err != nil {
 			return nil, nil, fmt.Errorf("read zip entry %s: %w", rel, err)
+		}
+		extracted += int64(len(data))
+		if extracted > maxDecompressedZipBytes {
+			return nil, nil, fmt.Errorf("zip entry %s: total decompressed size exceeds %d bytes", rel, maxDecompressedZipBytes)
 		}
 		header, err := buildMultipartFileHeader(filepath.Base(rel), data)
 		if err != nil {

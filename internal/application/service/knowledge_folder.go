@@ -62,9 +62,10 @@ func (s *knowledgeFolderService) CreateFolder(
 		return nil, repository.ErrFolderNameExists
 	}
 
-	// Calculate path and depth
-	var path string
-	var depth int = 1
+	// Pre-generate ID and compute the final path before the single atomic Create.
+	folderID := uuid.New().String()
+	path := "/" + folderID + "/"
+	depth := 1
 	if req.ParentFolderID != nil && *req.ParentFolderID != "" {
 		parent, err := s.repo.GetByID(ctx, tenantID, *req.ParentFolderID)
 		if err != nil {
@@ -74,12 +75,11 @@ func (s *knowledgeFolderService) CreateFolder(
 			return nil, repository.ErrMaxDepthExceeded
 		}
 		depth = parent.Depth + 1
-		path = parent.Path
-	} else {
-		path = "/"
+		path = parent.Path + folderID + "/"
 	}
 
 	folder := &types.KnowledgeFolder{
+		ID:              folderID,
 		TenantID:        tenantID,
 		KnowledgeBaseID: kbID,
 		Name:            name,
@@ -91,12 +91,6 @@ func (s *knowledgeFolderService) CreateFolder(
 	}
 
 	if err := s.repo.Create(ctx, folder); err != nil {
-		return nil, err
-	}
-
-	// Update path to include the folder's own ID
-	folder.Path = path + folder.ID + "/"
-	if err := s.repo.Update(ctx, folder); err != nil {
 		return nil, err
 	}
 
@@ -112,8 +106,9 @@ func (s *knowledgeFolderService) GetFolder(ctx context.Context, id string) (*typ
 	if err != nil {
 		return nil, err
 	}
-	// Populate knowledge count
-	count, err := s.repo.CountKnowledge(ctx, tenantID, folder.ID)
+	// Populate knowledge count (recursive, so the UI shows the total for this folder
+	// and all of its descendants).
+	count, err := s.repo.CountKnowledgeRecursive(ctx, tenantID, folder.ID)
 	if err != nil {
 		logger.Warnf(ctx, "[Folder] Failed to count knowledge for folder %s: %v", id, err)
 	} else {
@@ -133,15 +128,37 @@ func (s *knowledgeFolderService) ListByParent(
 	if err != nil {
 		return nil, err
 	}
-	// Bulk load counts for these folders
+	if len(folders) == 0 {
+		return folders, nil
+	}
+	// Build the full KB tree so we can compute recursive counts for all folders
+	// in one pass (avoids N+1 CountKnowledgeRecursive queries).
+	allFolders, err := s.repo.GetAllInKB(ctx, tenantID, kbID)
+	if err != nil {
+		logger.Warnf(ctx, "[Folder] Failed to load full tree for counts in KB %s: %v", kbID, err)
+		return folders, nil
+	}
 	counts, err := s.repo.CountKnowledgeByKB(ctx, tenantID, kbID)
 	if err != nil {
 		logger.Warnf(ctx, "[Folder] Failed to bulk count knowledge for KB %s: %v", kbID, err)
 		return folders, nil
 	}
-	for _, f := range folders {
+	for _, f := range allFolders {
 		f.KnowledgeCount = counts[f.ID]
 	}
+	roots := buildFolderTree(allFolders)
+	for _, root := range roots {
+		populateChildCounts(root)
+	}
+	// Map recursive counts back to the requested sibling folders.
+	countByID := make(map[string]int64, len(allFolders))
+	for _, f := range allFolders {
+		countByID[f.ID] = f.KnowledgeCount
+	}
+	for _, f := range folders {
+		f.KnowledgeCount = countByID[f.ID]
+	}
+	logger.Debugf(ctx, "[Folder] ListByParent kb=%s parent=%v returned %d folders with recursive counts", kbID, parentID, len(folders))
 	return folders, nil
 }
 
@@ -274,8 +291,9 @@ func (s *knowledgeFolderService) DeleteFolder(ctx context.Context, id string, fo
 		return err
 	}
 
-	// Check if folder has knowledge entries
-	knowledgeCount, err := s.repo.CountKnowledge(ctx, tenantID, id)
+	// Check if folder has knowledge entries (recursively, so subfolders with content
+	// are also counted as non-empty).
+	knowledgeCount, err := s.repo.CountKnowledgeRecursive(ctx, tenantID, id)
 	if err != nil {
 		return err
 	}
@@ -366,6 +384,17 @@ func (s *knowledgeFolderService) MoveFolder(
 		} else {
 			newParentPath = "/"
 			newDepth = 1
+		}
+
+		// Descendant depth check: moving the subtree must not push any descendant
+		// past the configured depth limit. maxDepth includes the moved folder itself.
+		maxDepth, err := s.repo.GetMaxDepthInTx(ctx, tx, tenantID, id)
+		if err != nil {
+			return err
+		}
+		maxRelativeDepth := maxDepth - oldDepth
+		if newDepth+maxRelativeDepth > types.MaxFolderDepth {
+			return repository.ErrMaxDepthExceeded
 		}
 
 		// Name uniqueness check inside the transaction.

@@ -943,11 +943,17 @@ func (s *knowledgeService) MoveToFolder(ctx context.Context, knowledgeID string,
 }
 
 // BatchMoveToFolder moves multiple knowledge entries to a specified folder or to root.
-func (s *knowledgeService) BatchMoveToFolder(ctx context.Context, knowledgeIDs []string, folderID *string) error {
+func (s *knowledgeService) BatchMoveToFolder(ctx context.Context, kbID string, knowledgeIDs []string, folderID *string) error {
 	if len(knowledgeIDs) == 0 {
 		return nil
 	}
-	return s.repo.BatchUpdateKnowledgeFolderID(ctx, knowledgeIDs, folderID)
+	tenantID := types.MustTenantIDFromContext(ctx)
+	return s.repo.BatchUpdateKnowledgeFolderID(ctx, tenantID, kbID, knowledgeIDs, folderID)
+}
+
+// CountKnowledgeByIDs returns the number of knowledge entries in the given KB and tenant that match the IDs.
+func (s *knowledgeService) CountKnowledgeByIDs(ctx context.Context, tenantID uint64, kbID string, knowledgeIDs []string) (int64, error) {
+	return s.repo.CountKnowledgeByIDs(ctx, tenantID, kbID, knowledgeIDs)
 }
 
 // ListKnowledgeIDsByFolderIDs returns knowledge IDs belonging to the specified folders.

@@ -116,6 +116,25 @@ func (r *fakeFolderRepo) GetDescendantsInTx(ctx context.Context, tx *gorm.DB, te
 	return r.getDescendantsImpl(ctx, tenantID, folderID)
 }
 
+func (r *fakeFolderRepo) GetMaxDepthInTx(_ context.Context, _ *gorm.DB, tenantID uint64, folderID string) (int, error) {
+	self, ok := r.folders[folderID]
+	if !ok || self.TenantID != tenantID {
+		return 0, repository.ErrFolderNotFound
+	}
+	maxDepth := self.Depth
+	for _, f := range r.folders {
+		if f.TenantID != tenantID || f.KnowledgeBaseID != self.KnowledgeBaseID {
+			continue
+		}
+		if len(f.Path) >= len(self.Path) && strings.HasPrefix(f.Path, self.Path) {
+			if f.Depth > maxDepth {
+				maxDepth = f.Depth
+			}
+		}
+	}
+	return maxDepth, nil
+}
+
 func (r *fakeFolderRepo) getDescendantsImpl(_ context.Context, tenantID uint64, folderID string) ([]*types.KnowledgeFolder, error) {
 	self, ok := r.folders[folderID]
 	if !ok || self.TenantID != tenantID {
@@ -443,6 +462,42 @@ func TestListByParent_Success(t *testing.T) {
 	assert.Len(t, folders, 2)
 }
 
+func TestListByParent_RecursiveCount(t *testing.T) {
+	svc, repo := setupServiceTest(t)
+	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(1))
+
+	rootID := uuid.New().String()
+	childID := uuid.New().String()
+
+	repo.folders[rootID] = &types.KnowledgeFolder{
+		ID: rootID, TenantID: 1, KnowledgeBaseID: "kb-1", Name: "root",
+		Path: fmt.Sprintf("/%s/", rootID), Depth: 1,
+	}
+	repo.folders[childID] = &types.KnowledgeFolder{
+		ID: childID, TenantID: 1, KnowledgeBaseID: "kb-1", Name: "child",
+		ParentFolderID: ptr(rootID), Path: fmt.Sprintf("/%s/%s/", rootID, childID), Depth: 2,
+	}
+	// 3 docs directly under root, 5 docs under child
+	repo.knowledge["d1"] = &types.Knowledge{ID: "d1", TenantID: 1, KnowledgeBaseID: "kb-1", FolderID: ptr(rootID)}
+	repo.knowledge["d2"] = &types.Knowledge{ID: "d2", TenantID: 1, KnowledgeBaseID: "kb-1", FolderID: ptr(rootID)}
+	repo.knowledge["d3"] = &types.Knowledge{ID: "d3", TenantID: 1, KnowledgeBaseID: "kb-1", FolderID: ptr(rootID)}
+	repo.knowledge["d4"] = &types.Knowledge{ID: "d4", TenantID: 1, KnowledgeBaseID: "kb-1", FolderID: ptr(childID)}
+	repo.knowledge["d5"] = &types.Knowledge{ID: "d5", TenantID: 1, KnowledgeBaseID: "kb-1", FolderID: ptr(childID)}
+	repo.knowledge["d6"] = &types.Knowledge{ID: "d6", TenantID: 1, KnowledgeBaseID: "kb-1", FolderID: ptr(childID)}
+	repo.knowledge["d7"] = &types.Knowledge{ID: "d7", TenantID: 1, KnowledgeBaseID: "kb-1", FolderID: ptr(childID)}
+	repo.knowledge["d8"] = &types.Knowledge{ID: "d8", TenantID: 1, KnowledgeBaseID: "kb-1", FolderID: ptr(childID)}
+
+	folders, err := svc.ListByParent(ctx, "kb-1", nil)
+	require.NoError(t, err)
+	require.Len(t, folders, 1)
+	assert.Equal(t, int64(8), folders[0].KnowledgeCount, "root should count all descendants")
+
+	children, err := svc.ListByParent(ctx, "kb-1", ptr(rootID))
+	require.NoError(t, err)
+	require.Len(t, children, 1)
+	assert.Equal(t, int64(5), children[0].KnowledgeCount, "child should count only its own docs")
+}
+
 // --- GetTree ---
 
 func TestGetTree_BuildsHierarchy(t *testing.T) {
@@ -623,6 +678,31 @@ func TestMoveFolder_NameConflict(t *testing.T) {
 
 	_, err := svc.MoveFolder(ctx, srcID, &types.MoveFolderRequest{TargetParentFolderID: &destID})
 	assert.ErrorIs(t, err, repository.ErrFolderNameExists)
+}
+
+func TestMoveFolder_DescendantDepthExceeded(t *testing.T) {
+	svc, repo := setupServiceTest(t)
+	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(1))
+
+	srcID := uuid.New().String()
+	childID := uuid.New().String()
+	destID := uuid.New().String()
+
+	repo.folders[srcID] = &types.KnowledgeFolder{
+		ID: srcID, TenantID: 1, KnowledgeBaseID: "kb-1", Name: "source",
+		Path: fmt.Sprintf("/%s/", srcID), Depth: 1,
+	}
+	repo.folders[childID] = &types.KnowledgeFolder{
+		ID: childID, TenantID: 1, KnowledgeBaseID: "kb-1", Name: "deep-child",
+		ParentFolderID: ptr(srcID), Path: fmt.Sprintf("/%s/%s/", srcID, childID), Depth: 2,
+	}
+	repo.folders[destID] = &types.KnowledgeFolder{
+		ID: destID, TenantID: 1, KnowledgeBaseID: "kb-1", Name: "deep-dest",
+		Path: fmt.Sprintf("/%s/", destID), Depth: 9,
+	}
+
+	_, err := svc.MoveFolder(ctx, srcID, &types.MoveFolderRequest{TargetParentFolderID: &destID})
+	assert.ErrorIs(t, err, repository.ErrMaxDepthExceeded)
 }
 
 // --- GetBreadcrumb ---

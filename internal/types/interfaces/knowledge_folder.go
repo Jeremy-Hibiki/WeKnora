@@ -34,6 +34,10 @@ type KnowledgeFolderRepository interface {
 	GetDescendants(ctx context.Context, tenantID uint64, folderID string) ([]*types.KnowledgeFolder, error)
 	// GetDescendantsInTx is GetDescendants executed within the given transaction.
 	GetDescendantsInTx(ctx context.Context, tx *gorm.DB, tenantID uint64, folderID string) ([]*types.KnowledgeFolder, error)
+	// GetMaxDepthInTx returns the maximum depth of the given folder and all its
+	// descendants (inclusive) within the given transaction. Useful for validating
+	// that a move won't push any descendant past the configured depth limit.
+	GetMaxDepthInTx(ctx context.Context, tx *gorm.DB, tenantID uint64, folderID string) (int, error)
 	// CountKnowledge counts knowledge entries directly in a folder.
 	CountKnowledge(ctx context.Context, tenantID uint64, folderID string) (int64, error)
 	// CountKnowledgeByKB returns a map from folder_id to knowledge count for all folders in a KB.

@@ -208,7 +208,38 @@ func (r *knowledgeFolderRepository) getDescendants(
 	return descendants, nil
 }
 
-// CountKnowledge counts knowledge entries directly in a folder.
+func (r *knowledgeFolderRepository) GetMaxDepthInTx(
+	ctx context.Context,
+	tx *gorm.DB,
+	tenantID uint64,
+	folderID string,
+) (int, error) {
+	if tx == nil {
+		tx = r.db
+	}
+	var folder types.KnowledgeFolder
+	if err := tx.WithContext(ctx).
+		Select("path, knowledge_base_id").
+		Where("tenant_id = ? AND id = ?", tenantID, folderID).
+		First(&folder).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return 0, ErrFolderNotFound
+		}
+		return 0, err
+	}
+
+	var maxDepth int
+	if err := tx.WithContext(ctx).
+		Model(&types.KnowledgeFolder{}).
+		Select("COALESCE(MAX(depth), 0)").
+		Where("tenant_id = ? AND knowledge_base_id = ?", tenantID, folder.KnowledgeBaseID).
+		Where("path LIKE ?", folder.Path+"%").
+		Scan(&maxDepth).Error; err != nil {
+		return 0, err
+	}
+	return maxDepth, nil
+}
+
 func (r *knowledgeFolderRepository) CountKnowledge(
 	ctx context.Context,
 	tenantID uint64,

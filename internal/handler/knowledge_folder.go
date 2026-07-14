@@ -3,6 +3,7 @@ package handler
 import (
 	"net/http"
 
+	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -268,8 +269,27 @@ func (h *KnowledgeFolderHandler) UpdateFolder(c *gin.Context) {
 		return
 	}
 
+	// Fetch and verify folder belongs to this KB before mutating.
+	folder, err := h.folderService.GetFolder(ctx, folderID)
+	if err != nil {
+		if err == repository.ErrFolderNotFound {
+			c.JSON(http.StatusNotFound, errors.NewNotFoundError("Folder not found"))
+			return
+		}
+		logger.ErrorWithFields(ctx, err, map[string]interface{}{
+			"folder_id": folderID,
+			"kb_id":     kbID,
+		})
+		c.JSON(http.StatusInternalServerError, errors.NewInternalServerError(err.Error()))
+		return
+	}
+	if folder.KnowledgeBaseID != kbID {
+		c.JSON(http.StatusForbidden, errors.NewForbiddenError("Folder does not belong to this knowledge base"))
+		return
+	}
+
 	// Update folder
-	folder, err := h.folderService.UpdateFolder(ctx, folderID, &req)
+	updated, err := h.folderService.UpdateFolder(ctx, folderID, &req)
 	if err != nil {
 		logger.ErrorWithFields(ctx, err, map[string]interface{}{
 			"folder_id": folderID,
@@ -279,25 +299,20 @@ func (h *KnowledgeFolderHandler) UpdateFolder(c *gin.Context) {
 		return
 	}
 
-	// Verify folder belongs to this KB
-	if folder.KnowledgeBaseID != kbID {
-		c.JSON(http.StatusForbidden, errors.NewForbiddenError("Folder does not belong to this knowledge base"))
-		return
-	}
-
-	logger.Infof(ctx, "Folder updated: %s (id=%s)", folder.Name, folder.ID)
-	c.JSON(http.StatusOK, folder)
+	logger.Infof(ctx, "Folder updated: %s (id=%s)", updated.Name, updated.ID)
+	c.JSON(http.StatusOK, updated)
+	return
 }
 
 // DeleteFolder godoc
 // @Summary      Delete folder
-// @Description  Delete a folder (soft delete by default, use force=true for cascade delete)
+// @Description  Delete a folder (soft delete by default, use force=true for cascade delete: subfolders are deleted and knowledge entries are moved to root)
 // @Tags         Folders
 // @Accept       json
 // @Produce      json
 // @Param        id         path      string  true   "Knowledge Base ID"
 // @Param        folder_id  path      string  true   "Folder ID"
-// @Param        force      query     bool    false  "Force cascade delete (delete children and files)"
+// @Param        force      query     bool    false  "Force cascade delete (delete subfolders and move knowledge entries to root)"
 // @Success      200        {object}  map[string]interface{}
 // @Failure      400        {object}  errors.AppError
 // @Failure      403        {object}  errors.AppError
@@ -408,8 +423,8 @@ func (h *KnowledgeFolderHandler) MoveFolder(c *gin.Context) {
 	updatedFolder, err := h.folderService.MoveFolder(ctx, folderID, &req)
 	if err != nil {
 		logger.ErrorWithFields(ctx, err, map[string]interface{}{
-			"folder_id":       folderID,
-			"target_parent":   req.TargetParentFolderID,
+			"folder_id":     folderID,
+			"target_parent": req.TargetParentFolderID,
 		})
 		c.JSON(http.StatusBadRequest, errors.NewBadRequestError(err.Error()))
 		return

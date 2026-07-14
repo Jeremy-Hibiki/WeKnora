@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"fmt"
 	"mime/multipart"
 	"net/http"
 	"path/filepath"
@@ -203,7 +204,16 @@ func (h *KnowledgeHandler) uploadFolder(c *gin.Context, isZip bool) {
 	result := folderUploadResult{Success: true, Skipped: []skipReason{}, Errors: []skipReason{}}
 	createdFolders := make(map[string]struct{}) // dedupe count by path
 
+	maxSizeMB := secutils.GetMaxFileSizeMB()
+	maxSize := maxSizeMB * 1024 * 1024
+
 	for i, fh := range files {
+		if fh.Size > maxSize {
+			result.Skipped = append(result.Skipped, skipReason{Path: paths[i], Reason: fmt.Sprintf("file size exceeds %dMB limit", maxSizeMB)})
+			result.SkippedFiles++
+			continue
+		}
+
 		dir, base, ok := normalizeRelativePath(paths[i])
 		if !ok {
 			result.Errors = append(result.Errors, skipReason{Path: paths[i], Reason: "invalid path"})

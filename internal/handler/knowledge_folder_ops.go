@@ -107,15 +107,21 @@ func (h *KnowledgeHandler) BatchMoveKnowledgeToFolder(c *gin.Context) {
 		return
 	}
 
-	// Validate access for all knowledge entries (check first one for KB access)
-	if len(req.KnowledgeIDs) == 0 {
-		c.JSON(http.StatusBadRequest, errors.NewBadRequestError("No knowledge IDs provided"))
-		return
-	}
-
+	// Validate access for the first knowledge entry (establishes KB context).
 	firstKnowledge, effectiveCtx, err := h.resolveKnowledgeAndValidateKBAccess(c, req.KnowledgeIDs[0], types.OrgRoleEditor)
 	if err != nil {
 		c.JSON(http.StatusForbidden, errors.NewForbiddenError("Permission denied"))
+		return
+	}
+
+	// Validate all knowledge entries belong to the same KB before batch moving.
+	count, err := h.kgService.CountKnowledgeByIDs(effectiveCtx, firstKnowledge.TenantID, firstKnowledge.KnowledgeBaseID, req.KnowledgeIDs)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, errors.NewInternalServerError(err.Error()))
+		return
+	}
+	if count != int64(len(req.KnowledgeIDs)) {
+		c.JSON(http.StatusForbidden, errors.NewForbiddenError("one or more knowledge entries do not belong to this knowledge base"))
 		return
 	}
 
@@ -128,7 +134,7 @@ func (h *KnowledgeHandler) BatchMoveKnowledgeToFolder(c *gin.Context) {
 	}
 
 	// Batch move
-	if err := h.kgService.BatchMoveToFolder(effectiveCtx, req.KnowledgeIDs, req.FolderID); err != nil {
+	if err := h.kgService.BatchMoveToFolder(effectiveCtx, firstKnowledge.KnowledgeBaseID, req.KnowledgeIDs, req.FolderID); err != nil {
 		logger.ErrorWithFields(ctx, err, map[string]interface{}{
 			"knowledge_count": len(req.KnowledgeIDs),
 			"folder_id":       req.FolderID,
