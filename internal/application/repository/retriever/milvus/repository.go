@@ -256,7 +256,8 @@ func (m *milvusRepository) ensureCollectionFields(ctx context.Context, collectio
 			field: entity.NewField().
 				WithName(fieldFolderID).
 				WithDataType(entity.FieldTypeVarChar).
-				WithMaxLength(255),
+				WithMaxLength(255).
+				WithNullable(true),
 			index: true,
 		},
 		{
@@ -264,7 +265,8 @@ func (m *milvusRepository) ensureCollectionFields(ctx context.Context, collectio
 			field: entity.NewField().
 				WithName(fieldTagID).
 				WithDataType(entity.FieldTypeVarChar).
-				WithMaxLength(255),
+				WithMaxLength(255).
+				WithNullable(true),
 			index: true,
 		},
 	}
@@ -694,6 +696,12 @@ func (m *milvusRepository) BatchUpdateFolderID(ctx context.Context, knowledgeFol
 			collectionName[:len(m.collectionBaseName)] != m.collectionBaseName {
 			continue
 		}
+
+		// Ensure schema fields exist before writing (handles pre-folder_id collections).
+		if err := m.ensureCollectionFields(ctx, collectionName); err != nil {
+			log.Warnf("[Milvus] Failed to ensure fields for %s: %v", collectionName, err)
+		}
+
 		// Update chunks for each folder ID
 		for folderID, knowledgeIDs := range folderGroups {
 			embeddings, _, err := m.searchByFilter(ctx, collectionName, &universalFilterCondition{
