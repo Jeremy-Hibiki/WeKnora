@@ -50,6 +50,22 @@ func (s *knowledgeService) BackfillFolderMetadata(ctx context.Context, kbID stri
 // knowledgeID→folderID map, resolves the retrieve engine, and calls
 // BatchUpdateFolderID. Errors are appended to the result.
 func (s *knowledgeService) backfillKB(ctx context.Context, kb *types.KnowledgeBase, result *types.BackfillResult) {
+	// CreateRetrieveEngineForKB needs TenantInfo in context when the KB uses
+	// env-default engines (VectorStoreID is nil/empty). The bootstrap caller
+	// passes a system-level context with no tenant, so inject the KB's own
+	// tenant here before resolving the engine.
+	if kb.VectorStoreID == nil || *kb.VectorStoreID == "" {
+		tenant, err := s.tenantRepo.GetTenantByID(ctx, kb.TenantID)
+		if err != nil || tenant == nil {
+			result.Errors = append(result.Errors, types.BackfillKBError{
+				KBID:  kb.ID,
+				Error: fmt.Sprintf("get tenant %d for engine resolution: %v", kb.TenantID, err),
+			})
+			return
+		}
+		ctx = context.WithValue(ctx, types.TenantInfoContextKey, tenant)
+	}
+
 	knowledgeList, err := s.repo.ListKnowledgeByKnowledgeBaseID(ctx, kb.TenantID, kb.ID)
 	if err != nil {
 		result.Errors = append(result.Errors, types.BackfillKBError{
