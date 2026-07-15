@@ -1,6 +1,6 @@
--- Migration 000065: Knowledge Folders (rollback)
+-- Migration 001000: Knowledge Folders (rollback)
 
-DO $$ BEGIN RAISE NOTICE '[Migration 000065] Rolling back knowledge folders...'; END $$;
+DO $$ BEGIN RAISE NOTICE '[Migration 001000] Rolling back knowledge folders...'; END $$;
 
 ALTER TABLE knowledges
     DROP CONSTRAINT IF EXISTS fk_knowledge_folder;
@@ -12,4 +12,4 @@ ALTER TABLE knowledges
 
 DROP TABLE IF EXISTS knowledge_folders CASCADE;
 
-DO $$ BEGIN RAISE NOTICE '[Migration 000065] Knowledge folders rollback complete'; END $$;
+DO $$ BEGIN RAISE NOTICE '[Migration 001000] Knowledge folders rollback complete'; END $$;

@@ -34,7 +34,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_folders_unique_name
     ON knowledge_folders(knowledge_base_id, COALESCE(parent_folder_id, '00000000-0000-0000-0000-000000000000'), name)
     WHERE deleted_at IS NULL;
 
-DO $$ BEGIN RAISE NOTICE '[Migration 000065] Adding folder_id column to knowledges...'; END $$;
+DO $$ BEGIN RAISE NOTICE '[Migration 001000] Adding folder_id column to knowledges...'; END $$;
 
 ALTER TABLE knowledges
     ADD COLUMN IF NOT EXISTS folder_id VARCHAR(36);
@@ -46,4 +46,4 @@ ALTER TABLE knowledges
 
 CREATE INDEX IF NOT EXISTS idx_knowledges_folder ON knowledges(folder_id);
 
-DO $$ BEGIN RAISE NOTICE '[Migration 000065] Knowledge folders migration complete'; END $$;
+DO $$ BEGIN RAISE NOTICE '[Migration 001000] Knowledge folders migration complete'; END $$;
