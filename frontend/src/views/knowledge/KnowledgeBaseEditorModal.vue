@@ -1019,50 +1019,29 @@ const handleAddWikiModel = () => {
 
 const handleStorageProviderUpdate = (value: string) => {
   if (formData.value) {
-    formData.value.storageProvider = value || tenantDefaultStorageProvider.value || 'local'
+    formData.value.storageProvider = props.mode === 'create'
+      ? editorResources.resolveUsableStorageProvider(value || tenantDefaultStorageProvider.value)
+      : (value || tenantDefaultStorageProvider.value || 'local')
   }
-}
-
-/**
- * pickAllowedProvider resolves a storage provider the tenant actually permits,
- * mirroring the disable logic in KBStorageSettings (engineOptions.disabled +
- * ensureAllowedProvider). The raw storage-engine-config.default_provider may
- * name an engine the allow-list excludes — e.g. 'local' when only minio is
- * allowed. Without this filter the KB-create payload carries that rejected
- * provider whenever the user never opens the lazy-mounted 'storage' section
- * (KBStorageSettings only runs its own ensureAllowedProvider once mounted, and
- * the section is gated behind v-if="currentSection === 'storage'").
- */
-function pickAllowedProvider(preferred: string): string {
-  const engines = editorResources.storageStatus ?? []
-  const status = (name: string) => engines.find(e => e.name === name)
-  // Mirrors KBStorageSettings.engineOptions: selectable unless explicitly
-  // disallowed (allowed===false), and — for non-local backends — unless
-  // unavailable (available===false).
-  const selectable = (name: string): boolean => {
-    const e = status(name)
-    if (e?.allowed === false) return false
-    if (name !== 'local' && e?.available === false) return false
-    return true
-  }
-  if (preferred && selectable(preferred)) return preferred
-  const order = ['local', 'minio', 'cos', 'tos', 's3', 'oss', 'ks3', 'obs']
-  return order.find(selectable) || preferred || 'local'
 }
 
 async function loadTenantDefaultStorageProvider(force = false) {
   try {
     await editorResources.ensureStorageEngine(force)
-    const raw = editorResources.storageConfig?.default_provider || 'local'
-    tenantDefaultStorageProvider.value = pickAllowedProvider(raw)
+    tenantDefaultStorageProvider.value = editorResources.resolveUsableStorageProvider(
+      editorResources.storageConfig?.default_provider,
+    )
   } catch {
-    tenantDefaultStorageProvider.value = 'local'
+    tenantDefaultStorageProvider.value = editorResources.resolveUsableStorageProvider()
   }
 }
 
 /** Resolved storage provider for create payload (never silently default to local before tenant config loads). */
 function resolvedStorageProvider(): string {
   const explicit = formData.value?.storageProvider?.trim()
+  if (props.mode === 'create') {
+    return editorResources.resolveUsableStorageProvider(explicit || tenantDefaultStorageProvider.value)
+  }
   if (explicit) return explicit
   return tenantDefaultStorageProvider.value || 'local'
 }
@@ -1497,14 +1476,14 @@ watch(() => props.visible, async (newVal) => {
       currentSection.value = uiStore.kbEditorInitialSection
     }
     
-    // 加载模型列表与租户默认存储引擎（创建 KB 时即使用，不依赖是否打开「存储引擎」Tab）
+    // 加载模型列表与空间默认存储引擎（创建 KB 时即使用，不依赖是否打开「存储引擎」Tab）
     await Promise.all([loadAllModels(), loadTenantDefaultStorageProvider()])
     
     // 根据模式加载数据
     if (props.mode === 'edit' && props.kbId) {
       await loadKBData()
     } else {
-      // 创建模式：初始化空表单，并预填租户默认存储引擎
+      // 创建模式：初始化空表单，并预填空间默认存储引擎
       formData.value = initFormData(props.initialType || 'document')
       formData.value.storageProvider = tenantDefaultStorageProvider.value
       hasFiles.value = false

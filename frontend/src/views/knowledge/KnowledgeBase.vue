@@ -557,6 +557,9 @@ const parseStatusOptions = computed(() => [
   { label: t('knowledgeBase.parseStatusProcessing'), value: 'processing' },
   { label: t('knowledgeBase.parseStatusCompleted'), value: 'completed' },
   { label: t('knowledgeBase.parseStatusFailed'), value: 'failed' },
+  { label: t('knowledgeBase.parseStatusCancelled'), value: 'cancelled' },
+  { label: t('knowledgeBase.parseStatusFinalizing'), value: 'finalizing' },
+  { label: t('knowledgeBase.parseStatusDraft'), value: 'draft' },
 ]);
 const selectedSource = ref('');
 // Source filter combines ingestion channels and the "manual"/"url" virtual
@@ -966,7 +969,10 @@ const onTagManageChanged = (payload?: { deletedTagId?: string }) => {
       await loadKnowledgeFiles(kbId.value);
       await loadTags(kbId.value, true);
     })();
+    return;
   }
+  resetPage();
+  loadKnowledgeFiles(kbId.value);
 };
 
 const handleKnowledgeTagChange = async (knowledgeId: string, tagIds: string[]) => {

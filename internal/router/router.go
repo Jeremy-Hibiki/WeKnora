@@ -61,6 +61,7 @@ type RouterParams struct {
 	ChunkHandler                 *handler.ChunkHandler
 	SessionHandler               *session.Handler
 	MessageHandler               *handler.MessageHandler
+	MessageSuggestionHandler     *handler.MessageSuggestionHandler
 	ModelHandler                 *handler.ModelHandler
 	ModelCredentialsHandler      *handler.ModelCredentialsHandler
 	EvaluationHandler            *handler.EvaluationHandler
@@ -130,7 +131,8 @@ func NewRouter(params RouterParams) *gin.Engine {
 	// Swagger API 文档（仅在非生产环境下启用）
 	// 通过 GIN_MODE 环境变量判断：release 模式下禁用 Swagger
 	if gin.Mode() != gin.ReleaseMode {
-		r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler,
+		r.GET("/swagger/*any", ginSwagger.WrapHandler(
+			swaggerFiles.Handler,
 			ginSwagger.DefaultModelsExpandDepth(-1), // 默认折叠 Models
 			ginSwagger.DocExpansion("list"),         // 展开模式: "list"(展开标签), "full"(全部展开), "none"(全部折叠)
 			ginSwagger.DeepLinking(true),            // 启用深度链接
@@ -223,7 +225,7 @@ func NewRouter(params RouterParams) *gin.Engine {
 		RegisterKnowledgeRoutes(v1, params.KnowledgeHandler, rbacGuards)
 		RegisterFAQRoutes(v1, params.FAQHandler, rbacGuards)
 		RegisterChunkRoutes(v1, params.ChunkHandler, rbacGuards)
-		RegisterSessionRoutes(v1, params.SessionHandler, rbacGuards)
+		RegisterSessionRoutes(v1, params.SessionHandler, params.MessageSuggestionHandler, rbacGuards)
 		RegisterChatRoutes(v1, params.SessionHandler, rbacGuards)
 		RegisterMessageRoutes(v1, params.MessageHandler, rbacGuards)
 		RegisterModelRoutes(v1, params.ModelHandler, params.ModelCredentialsHandler, rbacGuards)
@@ -521,7 +523,12 @@ func RegisterMessageRoutes(r *gin.RouterGroup, handler *handler.MessageHandler, 
 // the message routes above. A future refactor can introduce
 // per-session ownership in the middleware layer the same way KB/agent
 // routes do today.
-func RegisterSessionRoutes(r *gin.RouterGroup, handler *session.Handler, g *rbacGuards) {
+func RegisterSessionRoutes(
+	r *gin.RouterGroup,
+	handler *session.Handler,
+	suggestionHandler *handler.MessageSuggestionHandler,
+	g *rbacGuards,
+) {
 	// Sessions are per-user chat state, not knowledge-base content. The
 	// chat capability lets a scoped key run the full conversation flow
 	// (create/manage its own sessions) without full tenant access.
@@ -544,6 +551,14 @@ func RegisterSessionRoutes(r *gin.RouterGroup, handler *session.Handler, g *rbac
 		sessions.DELETE("/:id/pin", handler.UnpinSession)
 		// 继续接收活跃流
 		sessions.GET("/continue-stream/:session_id", handler.ContinueStream)
+
+		if suggestionHandler != nil {
+			// Gin requires wildcard names to be identical within the same HTTP-method
+			// radix tree. Existing GET session routes use :id, so keep that name here.
+			sessions.GET("/:id/messages/:message_id/suggestions", suggestionHandler.Get)
+			sessions.POST("/:session_id/messages/:message_id/suggestions", suggestionHandler.Ensure)
+			sessions.POST("/:session_id/suggestion-events", suggestionHandler.RecordEvent)
+		}
 	}
 }
 
@@ -1627,7 +1642,8 @@ func serveKBScopedFiles(
 	// API keys are denied outright (as on /files): a signed URL's tenant/KB
 	// scope cannot authorize serving an arbitrary file_path under the owner
 	// tenant, and this route deliberately crosses the caller's own tenant.
-	r.GET("/knowledge-bases/:id/files",
+	r.GET(
+		"/knowledge-bases/:id/files",
 		middleware.DenyAPIKeyPrincipal(),
 		g.Viewer(),
 		g.KBAccessRead("id"),
