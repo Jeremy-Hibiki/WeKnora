@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/Tencent/WeKnora/internal/datasource"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -139,15 +140,17 @@ type commitInfo struct {
 
 // repoInfo is the extracted result from `svn info`.
 type repoInfo struct {
-	Revision int64
-	UUID     string
-	Root     string
-	URL      string
+	Revision   int64
+	UUID       string
+	Root       string
+	URL        string
+	CommitDate time.Time
 }
 
 // listXML is the parsed response of `svn list --xml` and `svn list -R --xml`.
+// Real SVN output nests <entry> inside <list>: <lists><list><entry>.
 type listXML struct {
-	Entries []listEntry `xml:"entry"`
+	Entries []listEntry `xml:"list>entry"`
 }
 
 // listEntry represents a single entry in an SVN directory listing.
@@ -159,8 +162,9 @@ type listEntry struct {
 }
 
 // diffSummarizeXML is the parsed response of `svn diff --summarize --xml`.
+// Real SVN output nests <path> inside <paths>: <diff><paths><path>.
 type diffSummarizeXML struct {
-	Paths []diffPath `xml:"path"`
+	Paths []diffPath `xml:"paths>path"`
 }
 
 // diffPath represents a single changed path in a diff summary.

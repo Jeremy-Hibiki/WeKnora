@@ -10,14 +10,17 @@ package svn
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/types"
+	"github.com/Tencent/WeKnora/internal/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -42,19 +45,30 @@ func setupTestRepo(t *testing.T) *testRepo {
 		t.Skipf("svnadmin not available: %v", err)
 	}
 
-	// Allow anonymous access (for test simplicity)
+	// Allow anonymous read+write (import needs write; no auth server in tests)
 	authDir := filepath.Join(repoPath, "conf")
-	for _, line := range []string{"[general]\n", "anon-access = read\n", "auth-access = write\n"} {
-		_ = os.WriteFile(filepath.Join(authDir, "svnserve.conf"), []byte(line), 0644)
+	confContent := "[general]\nanon-access = write\nauth-access = write\n"
+	_ = os.WriteFile(filepath.Join(authDir, "svnserve.conf"), []byte(confContent), 0644)
+
+	// Whitelist localhost so the connector's Validate() passes its SSRF check
+	utils.SetSSRFWhitelistFromRaw("localhost")
+	t.Cleanup(utils.ResetSSRFWhitelistForTest)
+
+	// Find an available port to avoid conflicts between parallel test repos
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("find free port: %v", err)
 	}
+	port := l.Addr().(*net.TCPAddr).Port
+	l.Close()
 
-	// Find an available port and start svnserve
-	port := "3690"
-	serveURL := fmt.Sprintf("svn://localhost:%s/", port)
+	serveURL := fmt.Sprintf("svn://localhost:%d/", port)
 
-	cmd := exec.Command("svnserve", "-d", "--foreground", "--listen-port", port,
+	cmd := exec.Command("svnserve", "-d", "--foreground", "--listen-port", strconv.Itoa(port),
 		"-r", filepath.Dir(repoPath))
-	cmd.Start()
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start svnserve: %v", err)
+	}
 	tr := &testRepo{
 		t:        t,
 		repoPath: repoPath,
@@ -67,16 +81,23 @@ func setupTestRepo(t *testing.T) *testRepo {
 	time.Sleep(500 * time.Millisecond)
 
 	// Import initial content
-	_ = os.MkdirAll(workDir, 0755)
+	require.NoError(t, os.MkdirAll(workDir, 0755))
 	docsDir := filepath.Join(workDir, "docs")
-	_ = os.MkdirAll(docsDir, 0755)
-	_ = os.WriteFile(filepath.Join(docsDir, "readme.md"), []byte("# README\n\nInitial content."), 0644)
-	_ = os.WriteFile(filepath.Join(docsDir, "guide.md"), []byte("# Guide\n\nHow to use."), 0644)
+	require.NoError(t, os.MkdirAll(docsDir, 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(docsDir, "readme.md"), []byte("# README\n\nInitial content."), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(docsDir, "guide.md"), []byte("# Guide\n\nHow to use."), 0644))
 
-	exec.Command("svn", "import", "--non-interactive", "-m", "initial import",
-		workDir, serveURL+"repo").Run()
+	importOut, importErr := exec.Command("svn", "import", "--non-interactive", "-m", "initial import",
+		workDir, serveURL+"repo").CombinedOutput()
+	require.NoError(t, importErr, "svn import failed: %s", importOut)
 
 	tr.serveURL = serveURL + "repo"
+
+	// Verify import actually succeeded
+	if out, err := exec.Command("svn", "info", "--non-interactive", "--xml",
+		tr.serveURL).CombinedOutput(); err != nil {
+		t.Fatalf("svn import verification failed: %v\n%s", err, out)
+	}
 
 	t.Cleanup(func() {
 		if tr.serveCmd != nil && tr.serveCmd.Process != nil {
@@ -90,16 +111,18 @@ func setupTestRepo(t *testing.T) *testRepo {
 func (tr *testRepo) commitNewFile(path, content string) {
 	tr.t.Helper()
 	fullPath := filepath.Join(tr.workDir, path)
-	os.MkdirAll(filepath.Dir(fullPath), 0755)
-	os.WriteFile(fullPath, []byte(content), 0644)
-	exec.Command("svn", "import", "--non-interactive", "-m", "add "+path,
-		fullPath, tr.serveURL+"/"+path).Run()
+	require.NoError(tr.t, os.MkdirAll(filepath.Dir(fullPath), 0755))
+	require.NoError(tr.t, os.WriteFile(fullPath, []byte(content), 0644))
+	out, err := exec.Command("svn", "import", "--non-interactive", "-m", "add "+path,
+		fullPath, tr.serveURL+"/"+path).CombinedOutput()
+	require.NoError(tr.t, err, "svn import %s: %s", path, out)
 }
 
 func (tr *testRepo) deleteFile(path string) {
 	tr.t.Helper()
-	exec.Command("svn", "--non-interactive", "delete", "-m", "delete "+path,
-		tr.serveURL+"/"+path).Run()
+	out, err := exec.Command("svn", "--non-interactive", "delete", "-m", "delete "+path,
+		tr.serveURL+"/"+path).CombinedOutput()
+	require.NoError(tr.t, err, "svn delete %s: %s", path, out)
 }
 
 func TestIntegration_ValidateAndList(t *testing.T) {

@@ -139,21 +139,23 @@ func TestParseInfoXML(t *testing.T) {
 func TestParseListXML(t *testing.T) {
 	xmlStr := `<?xml version="1.0"?>
 <lists>
-  <entry kind="dir">
-    <name>docs</name>
-    <commit revision="100">
-      <author>alice</author>
-      <date>2024-01-10T00:00:00.000000Z</date>
-    </commit>
-  </entry>
-  <entry kind="file">
-    <name>readme.md</name>
-    <size>1024</size>
-    <commit revision="99">
-      <author>bob</author>
-      <date>2024-01-09T00:00:00.000000Z</date>
-    </commit>
-  </entry>
+  <list path="svn://localhost/repo">
+    <entry kind="dir">
+      <name>docs</name>
+      <commit revision="100">
+        <author>alice</author>
+        <date>2024-01-10T00:00:00.000000Z</date>
+      </commit>
+    </entry>
+    <entry kind="file">
+      <name>readme.md</name>
+      <size>1024</size>
+      <commit revision="99">
+        <author>bob</author>
+        <date>2024-01-09T00:00:00.000000Z</date>
+      </commit>
+    </entry>
+  </list>
 </lists>`
 
 	var listing listXML
@@ -171,9 +173,11 @@ func TestParseListXML(t *testing.T) {
 func TestParseDiffSummarizeXML(t *testing.T) {
 	xmlStr := `<?xml version="1.0"?>
 <diff>
-  <path kind="file" item="added" props="none">docs/new.md</path>
-  <path kind="file" item="modified" props="none">docs/guide.md</path>
-  <path kind="file" item="deleted" props="none">docs/old.md</path>
+  <paths>
+    <path kind="file" item="added" props="none">svn://localhost/repo/docs/new.md</path>
+    <path kind="file" item="modified" props="none">svn://localhost/repo/docs/guide.md</path>
+    <path kind="file" item="deleted" props="none">svn://localhost/repo/docs/old.md</path>
+  </paths>
 </diff>`
 
 	var summary diffSummarizeXML
@@ -182,7 +186,7 @@ func TestParseDiffSummarizeXML(t *testing.T) {
 
 	require.Len(t, summary.Paths, 3)
 	assert.Equal(t, "added", summary.Paths[0].Item)
-	assert.Equal(t, "docs/new.md", summary.Paths[0].Path)
+	assert.Equal(t, "svn://localhost/repo/docs/new.md", summary.Paths[0].Path)
 	assert.Equal(t, "modified", summary.Paths[1].Item)
 	assert.Equal(t, "deleted", summary.Paths[2].Item)
 }
@@ -251,6 +255,7 @@ func TestConnector_FetchAll(t *testing.T) {
 	assert.Equal(t, "/docs/readme.md", items[0].ExternalID)
 	assert.Contains(t, items[0].Metadata, "channel")
 	assert.Equal(t, types.ChannelSVN, items[0].Metadata["channel"])
+	assert.Equal(t, "https://svn.example.com/repo/docs/readme.md", items[0].URL)
 }
 
 func TestConnector_FetchAll_PartialError(t *testing.T) {
@@ -307,6 +312,45 @@ func TestConnector_FetchAll_PartialSuccess(t *testing.T) {
 type selectiveCatMock struct {
 	*mockSVNCLI
 	failPredicate func(path string) bool
+}
+
+func TestConnector_FetchAll_OversizedSoftSkip(t *testing.T) {
+	mock := &mockSVNCLI{
+		infoResult: &repoInfo{Revision: 100, UUID: "test-uuid"},
+		listRecursiveResult: []listEntry{
+			{Name: "good.md", Kind: "file", Size: 50},
+			// Size 0 = unknown from list; real size revealed only by bounded Cat
+			{Name: "sneaky-big.md", Kind: "file", Size: 0},
+		},
+	}
+	c := &Connector{
+		newCLIFunc: func(_ *Config) svnCLI {
+			return &errCatMock{
+				mockSVNCLI: mock,
+				errFor:     map[string]error{"/docs/sneaky-big.md": ErrFileTooLarge},
+			}
+		},
+	}
+
+	items, err := c.FetchAll(context.Background(), testConfig(), []string{"/docs"})
+
+	// Oversized = soft skip: no error, other files returned
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	assert.Equal(t, "/docs/good.md", items[0].ExternalID)
+}
+
+// errCatMock returns per-path errors from Cat.
+type errCatMock struct {
+	*mockSVNCLI
+	errFor map[string]error
+}
+
+func (s *errCatMock) Cat(ctx context.Context, repoURL, path string, rev int64) ([]byte, error) {
+	if err, ok := s.errFor[path]; ok {
+		return nil, err
+	}
+	return s.mockSVNCLI.Cat(ctx, repoURL, path, rev)
 }
 
 func (s *selectiveCatMock) Cat(ctx context.Context, repoURL, path string, rev int64) ([]byte, error) {
@@ -411,6 +455,29 @@ func TestConnector_FetchIncremental_WithDiffs(t *testing.T) {
 	assert.Equal(t, "/docs/gone.md", deletedItems[0].ExternalID)
 
 	assert.Equal(t, int64(105), newCursor.ConnectorCursor["last_revision"])
+}
+
+func TestNormalizeDiffPath(t *testing.T) {
+	repoURL := "svn://host:3690/repo"
+	repoRoot := "svn://host:3690/repo"
+
+	tests := []struct {
+		name     string
+		diffPath string
+		want     string
+	}{
+		{"full URL", "svn://host:3690/repo/docs/new.md", "/docs/new.md"},
+		{"relative path", "docs/new.md", "/docs/new.md"},
+		{"leading slash", "/docs/new.md", "/docs/new.md"},
+		{"root only", "", "/"},
+		{"whitespace", "  docs/new.md  ", "/docs/new.md"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := normalizeDiffPath(tt.diffPath, repoRoot, repoURL)
+			assert.Equal(t, tt.want, got)
+		})
+	}
 }
 
 func TestBuildFilePath(t *testing.T) {

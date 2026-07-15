@@ -3,8 +3,10 @@ package svn
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -46,7 +48,8 @@ func (c *Connector) Validate(ctx context.Context, config *types.DataSourceConfig
 		return err
 	}
 
-	if err := datasource.ValidateConnectorBaseURL(cfg.RepoURL); err != nil {
+	if err := datasource.ValidateConnectorBaseURLWithSchemes(cfg.RepoURL,
+		[]string{"svn", "svn+ssh", "http", "https"}); err != nil {
 		return fmt.Errorf("repo_url SSRF validation failed: %w", err)
 	}
 
@@ -164,11 +167,17 @@ func (c *Connector) fetchAllWithInfo(
 
 			content, err := cli.Cat(ctx, cfg.RepoURL, filePath, info.Revision)
 			if err != nil {
+				if errors.Is(err, ErrFileTooLarge) {
+					// Soft skip, consistent with the list --xml size pre-check:
+					// oversized is a filtering decision, not a sync failure.
+					logger.Infof(ctx, "[SVN] skipping oversized file %s: %v", filePath, err)
+					continue
+				}
 				partialDetails = append(partialDetails, fmt.Sprintf("cat %s: %v", filePath, err))
 				continue
 			}
 
-			items = append(items, buildFetchedItem(filePath, content, e, resID))
+			items = append(items, buildFetchedItem(filePath, content, e, resID, cfg.RepoURL))
 		}
 	}
 
@@ -263,6 +272,12 @@ func (c *Connector) FetchIncremental(
 
 			content, err := cli.Cat(ctx, cfg.RepoURL, filePath, info.Revision)
 			if err != nil {
+				if errors.Is(err, ErrFileTooLarge) {
+					// Soft skip: oversized is a filtering decision, not a sync
+					// failure — mirrors FetchAll's silent size skip.
+					logger.Infof(ctx, "[SVN] skipping oversized file %s: %v", filePath, err)
+					continue
+				}
 				partialDetails = append(partialDetails, fmt.Sprintf("cat %s: %v", filePath, err))
 				continue
 			}
@@ -331,28 +346,76 @@ func shouldIncludeByPath(filePath string, cfg *Config) bool {
 		}
 	}
 
-	// Exclude paths (glob matching)
+	// Exclude paths (glob matching with ** support)
+	relPath := strings.TrimPrefix(filePath, "/")
 	for _, pattern := range cfg.ExcludePaths {
-		matched, _ := filepath.Match(pattern, filepath.Base(filePath))
-		if matched {
+		if matchExcludePath(pattern, relPath) {
 			return false
-		}
-		// Also try matching against full relative path
-		trimmedPath := strings.TrimPrefix(filePath, "/")
-		matched, _ = filepath.Match(pattern, trimmedPath)
-		if matched {
-			return false
-		}
-		// Prefix match for directory patterns like "draft/*"
-		if strings.HasSuffix(pattern, "/*") {
-			prefix := strings.TrimSuffix(pattern, "/*")
-			if strings.HasPrefix(trimmedPath, prefix+"/") {
-				return false
-			}
 		}
 	}
 
 	return true
+}
+
+// matchExcludePath checks whether a file path should be excluded based on a
+// glob pattern. Semantics:
+//   - * matches any characters including / (i.e. crosses directory boundaries)
+//   - ** is equivalent to * (accepted for gitignore familiarity)
+//   - ? matches any single character including /
+//   - The pattern is tested at every path depth so "draft/*" matches both
+//     "/draft/secret.md" and "/docs/draft/deep/secret.md"
+//
+// Malformed regex from a bad pattern returns false (no exclusion).
+func matchExcludePath(pattern, relPath string) bool {
+	pattern = strings.TrimSpace(pattern)
+	pattern = strings.TrimPrefix(pattern, "/")
+	relPath = strings.TrimPrefix(relPath, "/")
+	if pattern == "" || relPath == "" {
+		return false
+	}
+
+	re, err := globToRegexp(pattern)
+	if err != nil {
+		return false
+	}
+
+	// Try matching at every path depth (sliding window) so the pattern
+	// anchors at any segment boundary, not just the repo root.
+	segments := strings.Split(relPath, "/")
+	for i := range segments {
+		subPath := strings.Join(segments[i:], "/")
+		if re.MatchString(subPath) {
+			return true
+		}
+	}
+	return false
+}
+
+// globToRegexp converts a glob pattern to a compiled regexp where * (and **)
+// match any characters including /, and ? matches any single character.
+func globToRegexp(pattern string) (*regexp.Regexp, error) {
+	var sb strings.Builder
+	sb.WriteString("^")
+	for i := 0; i < len(pattern); i++ {
+		c := pattern[i]
+		switch {
+		case c == '*' && i+1 < len(pattern) && pattern[i+1] == '*':
+			sb.WriteString(".*")
+			i++
+		case c == '*':
+			sb.WriteString(".*")
+		case c == '?':
+			sb.WriteString(".")
+		case c == '.' || c == '+' || c == '(' || c == ')' || c == '[' || c == ']' ||
+			c == '{' || c == '}' || c == '^' || c == '$' || c == '|' || c == '\\':
+			sb.WriteByte('\\')
+			sb.WriteByte(c)
+		default:
+			sb.WriteByte(c)
+		}
+	}
+	sb.WriteString("$")
+	return regexp.Compile(sb.String())
 }
 
 // buildFilePath constructs the full file path from a resource ID and entry name.
@@ -366,14 +429,14 @@ func buildFilePath(resID, entryName string) string {
 }
 
 // buildFetchedItem creates a FetchedItem from a file entry.
-func buildFetchedItem(filePath string, content []byte, entry listEntry, resID string) types.FetchedItem {
+func buildFetchedItem(filePath string, content []byte, entry listEntry, resID, repoURL string) types.FetchedItem {
 	return types.FetchedItem{
 		ExternalID:       filePath,
 		Title:            filepath.Base(filePath),
 		Content:          content,
 		ContentType:      guessContentType(filePath),
 		FileName:         filepath.Base(filePath),
-		URL:              "", // Not available without repo root; can be built if needed
+		URL:              joinURLPath(repoURL, filePath),
 		UpdatedAt:        parseSVNDate(entry.Commit.Date),
 		SourceResourceID: resID,
 		Metadata: map[string]string{
@@ -388,9 +451,19 @@ func buildFetchedItem(filePath string, content []byte, entry listEntry, resID st
 // be relative to the repo root or an absolute URL) to a clean repo-relative path.
 func normalizeDiffPath(diffPath, repoRoot, repoURL string) string {
 	p := strings.TrimSpace(diffPath)
-	// svn diff --summarize on a URL returns paths relative to that URL
-	// strip leading slashes for consistency
+	// svn diff --summarize returns paths as full repository URLs or
+	// repo-root-relative paths. Strip the repo root/URL prefix to obtain a
+	// clean repo-relative path.
+	for _, prefix := range []string{repoURL, repoRoot} {
+		if prefix != "" && strings.HasPrefix(p, prefix) {
+			p = strings.TrimPrefix(p, prefix)
+			break
+		}
+	}
 	p = strings.TrimPrefix(p, "/")
+	if p == "" {
+		return "/"
+	}
 	return "/" + p
 }
 
@@ -441,8 +514,12 @@ func parseSVNDate(s string) time.Time {
 	return t
 }
 
-// RevisionToTime is a placeholder — the revision number itself doesn't map to
-// a timestamp. We use it only when we don't have a per-file commit date.
+// RevisionToTime returns the timestamp of the revision's commit. For
+// incremental sync where we don't have per-file commit dates, this provides
+// a reasonable approximation from the repo HEAD commit date.
 func (info *repoInfo) RevisionToTime() time.Time {
+	if !info.CommitDate.IsZero() {
+		return info.CommitDate
+	}
 	return time.Now().UTC()
 }

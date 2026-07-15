@@ -99,13 +99,49 @@ func TestShouldInclude_MaxFileSize(t *testing.T) {
 }
 
 func TestShouldInclude_ExcludePaths(t *testing.T) {
-	cfg := &Config{
-		ExcludePaths: []string{"draft/*", "*/temp/*"},
-	}
+	tests := []struct {
+		name     string
+		patterns []string
+		path     string
+		exclude  bool
+	}{
+		// Top-level directory pattern
+		{"top-level draft/*", []string{"draft/*"}, "/draft/wip.md", true},
+		{"top-level draft/* keep", []string{"draft/*"}, "/docs/final.md", false},
 
-	assert.False(t, shouldInclude("/draft/wip.md", 100, cfg))
-	assert.False(t, shouldInclude("/docs/temp/cache.md", 100, cfg))
-	assert.True(t, shouldInclude("/docs/final.md", 100, cfg))
+		// Nested directory — was silently missed before fix
+		{"nested draft/*", []string{"draft/*"}, "/docs/draft/secret.md", true},
+		{"deeply nested draft/*", []string{"draft/*"}, "/a/b/draft/c/d.md", true},
+
+		// */temp/* pattern — requires a segment before temp
+		{"temp one level", []string{"*/temp/*"}, "/docs/temp/cache.md", true},
+		{"temp at root no match", []string{"*/temp/*"}, "/temp/cache.md", false},
+		{"temp deeper", []string{"*/temp/*"}, "/a/temp/b/c.md", true},
+
+		// Suffix pattern
+		{"suffix *.tmp", []string{"*.tmp"}, "/docs/readme.tmp", true},
+		{"suffix *.tmp nested", []string{"*.tmp"}, "/a/b/c.tmp", true},
+		{"suffix keep", []string{"*.tmp"}, "/docs/readme.md", false},
+
+		// ** (double-star) patterns
+		{"double-star draft/**", []string{"draft/**"}, "/docs/draft/deep/secret.md", true},
+		{"double-star draft/** top", []string{"draft/**"}, "/draft/x.md", true},
+		{"double-star **/temp/**", []string{"**/temp/**"}, "/a/temp/b/c.md", true},
+
+		// Non-matching
+		{"no match", []string{"draft/*"}, "/docs/final.md", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &Config{ExcludePaths: tt.patterns}
+			got := shouldInclude(tt.path, 100, cfg)
+			if tt.exclude {
+				assert.False(t, got, "%q should be excluded by %v", tt.path, tt.patterns)
+			} else {
+				assert.True(t, got, "%q should NOT be excluded by %v", tt.path, tt.patterns)
+			}
+		})
+	}
 }
 
 func TestGuessContentType(t *testing.T) {
@@ -149,4 +185,44 @@ func TestItemToChangeType(t *testing.T) {
 	assert.Equal(t, "D", itemToChangeType("deleted"))
 	assert.Equal(t, "", itemToChangeType("none"))
 	assert.Equal(t, "", itemToChangeType(""))
+}
+
+func TestGlobToRegexp(t *testing.T) {
+	tests := []struct {
+		pattern string
+		path    string
+		match   bool
+	}{
+		// Literal
+		{"docs/readme.md", "docs/readme.md", true},
+		{"docs/readme.md", "docs/other.md", false},
+		// Single * crosses / in our implementation
+		{"draft/*", "draft/secret.md", true},
+		{"*.tmp", "a/b/c.tmp", true},
+		// ** equivalent to *
+		{"draft/**", "draft/deep/secret.md", true},
+		// ? matches any single char
+		{"file?.md", "file1.md", true},
+		{"file?.md", "file12.md", false},
+		// Special regex chars are escaped
+		{"file.md", "fileXmd", false}, // dot is literal
+		{"a+b", "a+b", true},          // plus is literal
+		// Trailing * matches zero or more
+		{"docs/*", "docs/", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.pattern+"_vs_"+tt.path, func(t *testing.T) {
+			re, err := globToRegexp(tt.pattern)
+			require.NoError(t, err)
+			assert.Equal(t, tt.match, re.MatchString(tt.path))
+		})
+	}
+}
+
+func TestGlobToRegexp_SpecialChars(t *testing.T) {
+	// Bracket chars are escaped to literals in our glob syntax (no char classes)
+	re, err := globToRegexp("[")
+	require.NoError(t, err)
+	assert.True(t, re.MatchString("["))
+	assert.False(t, re.MatchString("a"))
 }
