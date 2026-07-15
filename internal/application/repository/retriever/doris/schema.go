@@ -70,11 +70,19 @@ func (r *dorisRepository) ensureTable(ctx context.Context, dimension int) error 
 				logger.GetLogger(bgCtx).Warnf(
 					"[Doris] ANN index for %s not ready within %s: %v "+
 						"(queries may fall back to brute force temporarily)",
-					tn, annReadyTimeout, err)
+					tn, annReadyTimeout, err,
+				)
 				return
 			}
 			logger.GetLogger(bgCtx).Infof("[Doris] ANN index for %s ready", tn)
 		}(tableName)
+	} else {
+		// Table already exists — ensure columns added after initial creation
+		// (e.g. folder_id, tag_id) are present. Idempotent: columns already
+		// present are silently skipped by ADD COLUMN IF NOT EXISTS.
+		if err := r.ensureTableColumns(ctx, tableName); err != nil {
+			log.Warnf("[Doris] Failed to ensure columns for %s: %v", tableName, err)
+		}
 	}
 
 	r.initializedTables.Store(dimension, true)
@@ -93,6 +101,35 @@ func (r *dorisRepository) tableExists(ctx context.Context, tableName string) (bo
 		return false, err
 	}
 	return n > 0, nil
+}
+
+// ensureTableColumns adds columns that were introduced after the initial
+// table creation (e.g. folder_id, tag_id). Uses ADD COLUMN IF NOT EXISTS so
+// it is safe to run on every ensureTable call — existing columns are no-ops.
+func (r *dorisRepository) ensureTableColumns(ctx context.Context, tableName string) error {
+	log := logger.GetLogger(ctx)
+
+	// Columns that may have been added after initial table creation.
+	// Each is idempotent: ADD COLUMN IF NOT EXISTS is a no-op if present.
+	columns := []struct {
+		name string
+		ddl  string
+	}{
+		{fieldFolderID, "VARCHAR(36) DEFAULT ''"},
+		{fieldTagID, "VARCHAR(255) DEFAULT ''"},
+	}
+
+	for _, col := range columns {
+		stmt := fmt.Sprintf("ALTER TABLE %s ADD COLUMN IF NOT EXISTS %s %s", tableName, col.name, col.ddl)
+		_, err := r.db.ExecContext(ctx, stmt)
+		if err != nil {
+			log.Warnf("[Doris] Failed to add column %s to %s: %v", col.name, tableName, err)
+			continue
+		}
+		log.Infof("[Doris] Ensured column %s exists in %s", col.name, tableName)
+	}
+
+	return nil
 }
 
 // createTable 发出 CREATE TABLE DDL。Doris DDL 是同步的（除 ANN 索引构建外），

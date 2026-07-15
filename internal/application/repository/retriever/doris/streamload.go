@@ -269,6 +269,19 @@ func (r *dorisRepository) BatchUpdateFolderID(ctx context.Context,
 	if len(knowledgeFolderMap) == 0 {
 		return nil
 	}
+
+	// Ensure folder_id column exists on all embedding tables before writing.
+	// Handles tables created before folder_id was added to the DDL.
+	tables, err := r.listEmbeddingTables(ctx)
+	if err != nil {
+		return fmt.Errorf("list embedding tables: %w", err)
+	}
+	for _, table := range tables {
+		if err := r.ensureTableColumns(ctx, table); err != nil {
+			logger.GetLogger(ctx).Warnf("[Doris] Failed to ensure columns for %s: %v", table, err)
+		}
+	}
+
 	compatMode, err := r.resolveCompatMode(ctx)
 	if err != nil {
 		return err

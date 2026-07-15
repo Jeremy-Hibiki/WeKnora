@@ -251,6 +251,42 @@ func (r *repository) BatchUpdateFolderID(ctx context.Context, knowledgeFolderMap
 	return nil
 }
 
+// ensureFolderIndex adds the folder_id filter index to an existing collection
+// if it is missing. TencentVectorDB is dynamically schematized — values
+// persist without an index — but folder-scoped queries need the index to
+// filter efficiently. Idempotent: DescribeCollection checks existing indexes
+// before calling AddIndex. The index builds async on the server; filtering
+// won't work until it's ready, but the call returns immediately.
+func (r *repository) ensureFolderIndex(ctx context.Context, collectionName string) {
+	log := logger.GetLogger(ctx)
+
+	// Check if folder_id filter index already exists.
+	colRes, err := r.client.Database(r.databaseName).DescribeCollection(ctx, collectionName)
+	if err != nil {
+		log.Warnf("[TencentVectorDB] Failed to describe collection %s for folder index check: %v", collectionName, err)
+		return
+	}
+	for _, fi := range colRes.Indexes.FilterIndex {
+		if fi.FieldName == fieldFolderID {
+			return // already indexed
+		}
+	}
+
+	log.Infof("[TencentVectorDB] Adding folder_id filter index to %s", collectionName)
+	buildExisted := true
+	err = r.client.AddIndex(ctx, r.databaseName, collectionName, &tcvectordb.AddIndexParams{
+		FilterIndexs: []tcvectordb.FilterIndex{
+			{FieldName: fieldFolderID, FieldType: tcvectordb.String, IndexType: tcvectordb.FILTER},
+		},
+		BuildExistedData: &buildExisted,
+	})
+	if err != nil {
+		log.Warnf("[TencentVectorDB] Failed to add folder_id index to %s: %v", collectionName, err)
+		return
+	}
+	log.Infof("[TencentVectorDB] Added folder_id filter index to %s (building async)", collectionName)
+}
+
 func (r *repository) Retrieve(ctx context.Context, params types.RetrieveParams) ([]*types.RetrieveResult, error) {
 	switch params.RetrieverType {
 	case types.VectorRetrieverType:
@@ -401,6 +437,10 @@ func (r *repository) ensureCollection(ctx context.Context, dimension int) error 
 	}
 	if exists {
 		r.initialized.Store(dimension, true)
+		// Ensure folder_id filter index exists on pre-folder_id collections.
+		// TencentVectorDB stores arbitrary fields dynamically, so the value
+		// persists fine — but filtering requires a filter index.
+		r.ensureFolderIndex(ctx, collectionName)
 		return nil
 	}
 
@@ -515,6 +555,8 @@ func (r *repository) updateKnowledgeFields(ctx context.Context, knowledgeIDs []s
 		if !r.matchesCollection(collection.CollectionName) {
 			continue
 		}
+		// Ensure folder_id filter index exists before updating.
+		r.ensureFolderIndex(ctx, collection.CollectionName)
 		_, err := r.client.Database(r.databaseName).Collection(collection.CollectionName).Update(ctx, tcvectordb.UpdateDocumentParams{
 			QueryFilter:  tcvectordb.NewFilter(tcvectordb.In(fieldKnowledgeID, knowledgeIDs)),
 			UpdateFields: fields,
