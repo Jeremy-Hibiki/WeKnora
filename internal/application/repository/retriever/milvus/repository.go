@@ -37,10 +37,10 @@ const (
 	fieldContentSparse    = "content_sparse"
 )
 
-var (
-	allFields = []string{fieldID, fieldContent, fieldSourceID, fieldSourceType, fieldChunkID,
-		fieldKnowledgeID, fieldKnowledgeBaseID, fieldTagID, fieldFolderID, fieldIsEnabled, fieldEmbedding}
-)
+var allFields = []string{
+	fieldID, fieldContent, fieldSourceID, fieldSourceType, fieldChunkID,
+	fieldKnowledgeID, fieldKnowledgeBaseID, fieldTagID, fieldFolderID, fieldIsEnabled, fieldEmbedding,
+}
 
 // NewMilvusRetrieveEngineRepository creates and initializes a new Milvus repository.
 // indexCfg is optional — pass nil to use env var / default values (env path).
@@ -191,6 +191,13 @@ func (m *milvusRepository) ensureCollection(ctx context.Context, dimension int) 
 		}
 
 		log.Infof("[Milvus] Successfully created collection %s", collectionName)
+	} else {
+		// Collection already exists — check for schema drift and add missing fields.
+		// This handles upgrades where new metadata fields (e.g. folder_id) were added
+		// to the schema definition but the collection was created before they existed.
+		if err := m.ensureCollectionFields(ctx, collectionName); err != nil {
+			log.Warnf("[Milvus] Failed to ensure collection fields for %s: %v", collectionName, err)
+		}
 	}
 
 	loadOpt := client.NewLoadCollectionOption(collectionName)
@@ -209,6 +216,83 @@ func (m *milvusRepository) ensureCollection(ctx context.Context, dimension int) 
 
 	// Mark as initialized
 	m.initializedCollections.Store(dimension, true)
+	return nil
+}
+
+// ensureCollectionFields checks an existing collection for missing metadata
+// fields and adds them via AddCollectionField (Milvus 2.5+). This handles
+// schema drift when new fields are added to the schema definition but the
+// collection was created before they existed.
+//
+// The expected fields and their definitions mirror the CreateCollection
+// schema above. Only fields absent from the live collection are added.
+// Index creation for the new field is also done here so filtering works
+// immediately after the field is added.
+func (m *milvusRepository) ensureCollectionFields(ctx context.Context, collectionName string) error {
+	log := logger.GetLogger(ctx)
+
+	// Describe the existing collection to get its current fields.
+	col, err := m.client.DescribeCollection(ctx, client.NewDescribeCollectionOption(collectionName))
+	if err != nil {
+		return fmt.Errorf("describe collection: %w", err)
+	}
+
+	existingFields := make(map[string]bool, len(col.Schema.Fields))
+	for _, f := range col.Schema.Fields {
+		existingFields[f.Name] = true
+	}
+
+	// Fields that may have been added after initial collection creation.
+	// Each entry is (fieldName, fieldBuilder, needsIndex).
+	type expectedField struct {
+		name  string
+		field *entity.Field
+		index bool
+	}
+
+	expected := []expectedField{
+		{
+			name: fieldFolderID,
+			field: entity.NewField().
+				WithName(fieldFolderID).
+				WithDataType(entity.FieldTypeVarChar).
+				WithMaxLength(255),
+			index: true,
+		},
+		{
+			name: fieldTagID,
+			field: entity.NewField().
+				WithName(fieldTagID).
+				WithDataType(entity.FieldTypeVarChar).
+				WithMaxLength(255),
+			index: true,
+		},
+	}
+
+	for _, ef := range expected {
+		if existingFields[ef.name] {
+			continue
+		}
+
+		log.Infof("[Milvus] Adding missing field %s to collection %s", ef.name, collectionName)
+
+		if err := m.client.AddCollectionField(ctx, client.NewAddCollectionFieldOption(collectionName, ef.field)); err != nil {
+			log.Warnf("[Milvus] Failed to add field %s to %s: %v", ef.name, collectionName, err)
+			continue
+		}
+
+		if ef.index {
+			loadTask, idxErr := m.client.CreateIndex(ctx, client.NewCreateIndexOption(collectionName, ef.name, index.NewAutoIndex(entity.IP)))
+			if idxErr != nil {
+				log.Warnf("[Milvus] Failed to create index for field %s: %v", ef.name, idxErr)
+			} else if loadTask != nil {
+				_ = loadTask.Await(ctx)
+			}
+		}
+
+		log.Infof("[Milvus] Successfully added field %s to collection %s", ef.name, collectionName)
+	}
+
 	return nil
 }
 
