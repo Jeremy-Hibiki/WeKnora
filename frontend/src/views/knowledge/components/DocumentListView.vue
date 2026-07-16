@@ -54,7 +54,7 @@ const emit = defineEmits<{
   (e: 'enter-folder', folderId: string): void;
   (e: 'toggle-row', id: string, checked: boolean, shiftKey: boolean): void;
   (e: 'toggle-all', checked: boolean): void;
-  (e: 'action', action: 'edit' | 'reparse' | 'cancel-parse' | 'move' | 'move-folder' | 'rename-folder' | 'tag-folder' | 'move-folder-to-kb' | 'delete' | 'view-trace' | 'batch-manage', item: KnowledgeItem): void;
+  (e: 'action', action: 'edit' | 'reparse' | 'cancel-parse' | 'move' | 'move-folder' | 'rename-folder' | 'tag-folder' | 'delete' | 'view-trace' | 'batch-manage', item: KnowledgeItem): void;
   (e: 'probe-trace', item: KnowledgeItem): void;
   (e: 'tag-edit', item: KnowledgeItem): void;
   // Move sub-flow emits
@@ -213,7 +213,7 @@ onBeforeUnmount(() => {
   stickyObserver = null;
 });
 
-const handleAction = (action: 'edit' | 'reparse' | 'cancel-parse' | 'move' | 'move-folder' | 'rename-folder' | 'tag-folder' | 'move-folder-to-kb' | 'delete' | 'view-trace' | 'batch-manage', item: KnowledgeItem) => {
+const handleAction = (action: 'edit' | 'reparse' | 'cancel-parse' | 'move' | 'move-folder' | 'rename-folder' | 'tag-folder' | 'delete' | 'view-trace' | 'batch-manage', item: KnowledgeItem) => {
   // Don't close popup for move — it triggers the move sub-flow
   if (action !== 'move') {
     moreOpen.value = null;
@@ -348,10 +348,6 @@ const handleAction = (action: 'edit' | 'reparse' | 'cancel-parse' | 'move' | 'mo
                   <div class="folder-row-menu-item" @click.stop="handleAction('move-folder', item)">
                     <t-icon name="folder-import" size="16px" />
                     <span>{{ $t('knowledgeFolder.moveFolder') }}</span>
-                  </div>
-                  <div class="folder-row-menu-item" @click.stop="handleAction('move-folder-to-kb', item)">
-                    <t-icon name="swap" size="16px" />
-                    <span>{{ $t('knowledgeBase.moveToKnowledgeBase') }}</span>
                   </div>
                   <div class="folder-row-menu-item" @click.stop="handleAction('tag-folder', item)">
                     <t-icon name="discount" size="16px" />

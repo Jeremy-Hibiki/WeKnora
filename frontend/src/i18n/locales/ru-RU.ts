@@ -6637,7 +6637,6 @@ export default {
     fileAndFolderCount: '{folders} папок, {files} файлов',
     moveFolderFailed: 'Не удалось переместить папку',
     moveFolderSuccess: 'Папка перемещена',
-    moveFolderEmpty: 'Папка пуста, нечего перемещать',
   },
   knowledge: {
     untitledDocument: 'Безымянный документ',

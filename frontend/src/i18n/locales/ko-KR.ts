@@ -6893,9 +6893,8 @@ export default {
     maxDepthExceeded: "최대 깊이 제한에 도달했습니다",
     uploadTargetHint: "파일이 업로드될 위치: {path}",
     fileAndFolderCount: "폴더 {folders}개, 파일 {files}개",
-    moveFolderFailed: "폴터 이동 실패",
-    moveFolderSuccess: "폴터가 이동되었습니다",
-    moveFolderEmpty: "폴터가 비어 있어 이동할 항목이 없습니다",
+    moveFolderFailed: "폴더 이동 실패",
+    moveFolderSuccess: "폴더가 이동되었습니다",
   },
   knowledge: {
     untitledDocument: "제목 없는 문서",

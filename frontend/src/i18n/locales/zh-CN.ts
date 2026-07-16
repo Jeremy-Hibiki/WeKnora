@@ -6989,7 +6989,6 @@ export default {
     fileAndFolderCount: "{folders} 个文件夹，{files} 个文件",
     moveFolderFailed: "移动文件夹失败",
     moveFolderSuccess: "移动文件夹成功",
-    moveFolderEmpty: "文件夹为空，无法移动",
   },
   knowledge: {
     untitledDocument: "未命名文档",
