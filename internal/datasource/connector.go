@@ -203,6 +203,14 @@ var ConnectorMetadataRegistry = map[string]ConnectorMetadata{
 		AuthType:     "custom",
 		Capabilities: []string{"incremental"},
 	},
+	types.ConnectorTypeSVN: {
+		Type:         types.ConnectorTypeSVN,
+		Name:         "SVN Repository",
+		Description:  "Sync documents from SVN repositories",
+		Priority:     8,
+		AuthType:     "custom",
+		Capabilities: []string{"incremental", "deletion_sync"},
+	},
 }
 
 // ListAvailableConnectors returns all available connector metadata
