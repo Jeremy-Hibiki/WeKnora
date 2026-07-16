@@ -4,7 +4,7 @@ server:
   host: "0.0.0.0"
   # When true, backfills folder_id metadata in vector stores for existing
   # chunks once on startup (best-effort). Env: WEKNORA_SERVER_AUTO_BACKFILL_FOLDER_METADATA
-  auto_backfill_folder_metadata: false
+  auto_backfill_folder_metadata: true
 
 # Conversation service configuration
 # NOTE: Prompt content is resolved from prompt_templates/ YAML files via xxx_id fields.
