@@ -1461,17 +1461,28 @@ const handleMoveKnowledge = (item: KnowledgeCard) => {
 const handleMoveFolderToKB = async (folder: KnowledgeFolder) => {
   try {
     // Fetch all knowledge entries in the folder subtree (recursive).
-    const res: any = await listKnowledgeFiles(kbId.value, {
-      page: 1,
-      page_size: 10000,
-      folder_scope: folder.id,
-    });
-    const entries = (res?.data || []) as any[];
-    if (entries.length === 0) {
+    // Backend caps page_size at 1000; paginate until fewer than page_size
+    // entries are returned.
+    const allIds: string[] = [];
+    const pageSize = 1000;
+    let page = 1;
+    while (true) {
+      const res: any = await listKnowledgeFiles(kbId.value, {
+        page,
+        page_size: pageSize,
+        folder_scope: folder.id,
+      });
+      const entries = (res?.data || []) as any[];
+      if (entries.length === 0) break;
+      for (const e of entries) allIds.push(e.id);
+      if (entries.length < pageSize) break;
+      page++;
+    }
+    if (allIds.length === 0) {
       MessagePlugin.warning(t('knowledgeFolder.moveFolderEmpty'));
       return;
     }
-    moveKbDialogIds.value = entries.map((e: any) => e.id);
+    moveKbDialogIds.value = allIds;
     moveKbDialogVisible.value = true;
     // Remember the source folder so we can delete it after a successful move.
     pendingDeleteFolderAfterMove.value = folder;
