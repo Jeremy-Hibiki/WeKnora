@@ -359,7 +359,11 @@ func (m *templateCaptureChatModel) ChatStream(
 func (m *templateCaptureChatModel) GetModelName() string { return "capture" }
 func (m *templateCaptureChatModel) GetModelID() string   { return "capture" }
 
-// --- isKnowledgeGone tests (Gap ②) -----------------------------------------
+// --- isKnowledgeGone: wiki worker must skip failed knowledge --------------
+// isKnowledgeGone checks whether a knowledge is in a terminal state where
+// wiki extraction should be skipped. We test that ParseStatusFailed is
+// treated as terminal (like Deleting/Cancelled), and that non-terminal
+// statuses (Completed/Finalizing/Processing) are NOT skipped.
 
 // minimalKnowledgeSvc is a fake KnowledgeService that only implements
 // GetKnowledgeByIDOnly — enough for isKnowledgeGone. All other methods
@@ -407,7 +411,11 @@ func TestIsKnowledgeGone_NotGoneForNonTerminal(t *testing.T) {
 	}
 }
 
-// --- Detached ctx tests for trimPendingList / requeueFailedOps (Gap ③) ------
+// --- trimPendingList / requeueFailedOps must survive cancelled context -----
+// On asynq timeout (60m) the batch context is cancelled. trimPendingList
+// (deletes successful ops) and requeueFailedOps (increments fail_count,
+// dead-letters after cap) must use a detached context for their DB writes
+// — otherwise fail_count never increments and the op loops forever.
 
 // ctxAwarePendingRepo wraps a minimal TaskPendingOpsRepository that records
 // whether the ctx passed to each method was cancelled. This lets us prove

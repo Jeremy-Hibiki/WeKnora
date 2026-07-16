@@ -313,7 +313,10 @@ func TestHousekeeping_PreservesRecentlyTouched(t *testing.T) {
 		"knowledge updated within the cutoff must be left alone")
 }
 
-// --- Wiki op scrub tests (Gap ①) -------------------------------------------
+// --- Wiki op scrub on housekeeping failure --------------------------------
+// When the housekeeping sweep marks a knowledge row as failed, it must also
+// remove that knowledge's pending wiki ingest ops from task_pending_ops so
+// the wiki worker doesn't re-execute on a document whose parse already failed.
 
 // fakePendingRepo records every DeleteByDedupKey call so tests can assert
 // which (dedupKey, op) pairs were scrubbed. All other methods panic since
