@@ -137,13 +137,17 @@ func newHousekeepingSvcForTest(db *gorm.DB) *HousekeepingService {
 }
 
 func newHousekeepingSvcWithInspector(db *gorm.DB, inspector interfaces.TaskInspector) *HousekeepingService {
+	return newHousekeepingSvcWithPendingRepo(db, inspector, nil)
+}
+
+func newHousekeepingSvcWithPendingRepo(db *gorm.DB, inspector interfaces.TaskInspector, pendingRepo interfaces.TaskPendingOpsRepository) *HousekeepingService {
 	cfg := &config.Config{KnowledgeBase: &config.KnowledgeBaseConfig{
 		// 1h floor + 10min buffer = 70min cutoff. Tight enough to keep
 		// the test's relative timestamps in seconds; the production
 		// default of 2h+10min is just a constant scale factor.
 		DocumentProcessTimeout: 1 * time.Hour,
 	}}
-	return NewHousekeepingService(db, cfg, inspector)
+	return NewHousekeepingService(db, cfg, inspector, pendingRepo)
 }
 
 // TestHousekeeping_RecoversAbandoned exercises the happy path: a
@@ -307,4 +311,109 @@ func TestHousekeeping_PreservesRecentlyTouched(t *testing.T) {
 	).Row().Scan(&status))
 	assert.Equal(t, types.ParseStatusProcessing, status,
 		"knowledge updated within the cutoff must be left alone")
+}
+
+// --- Wiki op scrub tests (Gap ①) -------------------------------------------
+
+// fakePendingRepo records every DeleteByDedupKey call so tests can assert
+// which (dedupKey, op) pairs were scrubbed. All other methods panic since
+// the sweep never calls them.
+type fakePendingRepo struct {
+	deleted []fakePendingDelete
+	err     error // if non-nil, DeleteByDedupKey returns this error
+}
+
+type fakePendingDelete struct {
+	taskType, scope, scopeID, dedupKey, op string
+}
+
+func (f *fakePendingRepo) Enqueue(_ context.Context, _ *types.TaskPendingOp) error {
+	panic("not used")
+}
+
+func (f *fakePendingRepo) PeekBatch(_ context.Context, _, _, _ string, _ int) ([]*types.TaskPendingOp, error) {
+	panic("not used")
+}
+
+func (f *fakePendingRepo) ClaimBatch(_ context.Context, _, _, _ string, _ int, _ time.Time) ([]*types.TaskPendingOp, error) {
+	panic("not used")
+}
+
+func (f *fakePendingRepo) ReleaseByIDs(_ context.Context, _ []int64) error {
+	panic("not used")
+}
+
+func (f *fakePendingRepo) DeleteByIDs(_ context.Context, _ []int64) error {
+	panic("not used")
+}
+
+func (f *fakePendingRepo) IncrFailCount(_ context.Context, _ int64) (int, error) {
+	panic("not used")
+}
+
+func (f *fakePendingRepo) PendingCount(_ context.Context, _, _, _ string) (int64, error) {
+	panic("not used")
+}
+
+func (f *fakePendingRepo) DeleteByDedupKey(_ context.Context, taskType, scope, scopeID, dedupKey, op string) error {
+	if f.err != nil {
+		return f.err
+	}
+	f.deleted = append(f.deleted, fakePendingDelete{taskType, scope, scopeID, dedupKey, op})
+	return nil
+}
+
+// insertKnowledgeWithKB writes a knowledge row at the given updated_at with
+// a knowledge_base_id so the wiki scrub loop can use it.
+func insertKnowledgeWithKB(t *testing.T, db *gorm.DB, id, kbID, status string, updatedAt time.Time) {
+	t.Helper()
+	require.NoError(t, db.Exec(
+		`INSERT INTO knowledges (id, knowledge_base_id, parse_status, updated_at) VALUES (?, ?, ?, ?)`,
+		id, kbID, status, updatedAt,
+	).Error)
+}
+
+// TestHousekeeping_ScrubsWikiOpsOnFailure verifies that when the sweep marks
+// a knowledge row as failed, it also scrubs that knowledge's pending wiki
+// ingest ops from task_pending_ops.
+func TestHousekeeping_ScrubsWikiOpsOnFailure(t *testing.T) {
+	db := setupHousekeepingDB(t)
+	repo := &fakePendingRepo{}
+	svc := newHousekeepingSvcWithPendingRepo(db, fakeTaskInspector{}, repo)
+	stale := time.Now().Add(-3 * time.Hour)
+	insertKnowledgeWithKB(t, db, "kid-stuck", "kb-1", types.ParseStatusFinalizing, stale)
+
+	svc.runSweep(context.Background())
+
+	// Knowledge must be marked failed.
+	var status string
+	require.NoError(t, db.Raw(`SELECT parse_status FROM knowledges WHERE id = ?`, "kid-stuck").Row().Scan(&status))
+	assert.Equal(t, types.ParseStatusFailed, status)
+
+	// Wiki ingest ops for that knowledge must be scrubbed.
+	require.Len(t, repo.deleted, 1, "exactly one DeleteByDedupKey call for the failed knowledge")
+	d := repo.deleted[0]
+	assert.Equal(t, "kid-stuck", d.dedupKey, "dedupKey must be the knowledge ID")
+	assert.Equal(t, WikiOpIngest, d.op, "only WikiOpIngest ops should be scrubbed")
+	assert.Equal(t, "kb-1", d.scopeID, "scopeID must be the knowledge base ID")
+}
+
+// TestHousekeeping_ScrubFailureIsNonFatal verifies that a DB error during
+// scrub is logged but does not abort the sweep for remaining rows.
+func TestHousekeeping_ScrubFailureIsNonFatal(t *testing.T) {
+	db := setupHousekeepingDB(t)
+	repo := &fakePendingRepo{err: errors.New("db unavailable")}
+	svc := newHousekeepingSvcWithPendingRepo(db, fakeTaskInspector{}, repo)
+	stale := time.Now().Add(-3 * time.Hour)
+	insertKnowledgeWithKB(t, db, "kid-stuck-1", "kb-1", types.ParseStatusProcessing, stale)
+	insertKnowledgeWithKB(t, db, "kid-stuck-2", "kb-2", types.ParseStatusProcessing, stale)
+
+	svc.runSweep(context.Background())
+
+	// Both rows must still be marked failed despite the scrub error.
+	for _, kid := range []string{"kid-stuck-1", "kid-stuck-2"} {
+		var status string
+		require.NoError(t, db.Raw(`SELECT parse_status FROM knowledges WHERE id = ?`, kid).Row().Scan(&status))
+		assert.Equal(t, types.ParseStatusFailed, status, "%s must be recovered despite scrub error", kid)
+	}
 }
