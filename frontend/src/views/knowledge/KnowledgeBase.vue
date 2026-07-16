@@ -39,7 +39,7 @@ import {
   getKnowledgeDetails,
   type FolderUploadResult,
 } from "@/api/knowledge-base/index";
-import { createFolder } from "@/api/knowledge-folder";
+import { createFolder, tagByFolder, countKnowledgeByFolderIDs } from "@/api/knowledge-folder";
 import { knowledgeSpansPayloadHasTrace } from '@/utils/knowledgeTrace';
 import FAQEntryManager from './components/FAQEntryManager.vue';
 import DocumentListView from './components/DocumentListView.vue';
@@ -49,6 +49,7 @@ import IconButton from '@/components/IconButton.vue';
 import IconButtonGroup from '@/components/IconButtonGroup.vue';
 import KbUploadSourceDropdown from './components/KbUploadSourceDropdown.vue';
 import TagEditDialog from './components/TagEditDialog.vue';
+import TagByFolderDialog from './components/TagByFolderDialog.vue';
 import KbTagManageDrawer from './components/KbTagManageDrawer.vue';
 import type { KnowledgeProcessOverrides } from '@/types/knowledgeProcess';
 import { useUploadConfirmStore, type UploadConfirmResult } from '@/stores/uploadConfirm';
@@ -65,6 +66,7 @@ import FolderManageDialog from '@/views/knowledge/components/FolderManageDialog.
 import MoveKnowledgeDialog from '@/views/knowledge/components/MoveKnowledgeDialog.vue';
 import FolderSelector from '@/views/knowledge/components/FolderSelector.vue';
 import { useKnowledgeFolder } from '@/composables/useKnowledgeFolder';
+import { getFolderDescendantIds } from '@/utils/knowledgeFolder';
 import type { KnowledgeFolder } from '@/types/knowledgeFolder';
 import { useI18n } from 'vue-i18n';
 import { useMarqueeSelect } from '@/hooks/useMarqueeSelect';
@@ -408,8 +410,10 @@ const batchMoveFolders = ref<KnowledgeFolder[]>([]);
 const batchMoveKnowledgeIds = ref<string[]>([]);
 // Disabled folder IDs for the move-folder dialog.
 const folderMoveDisabledIds = computed(() => {
-  if (folderToMove.value) return [folderToMove.value.id];
-  return batchMoveFolders.value.map((f) => f.id);
+  const sourceIds = folderToMove.value
+    ? [folderToMove.value.id]
+    : batchMoveFolders.value.map((f) => f.id);
+  return getFolderDescendantIds(folderTree.value, sourceIds);
 });
 let movePollTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -762,6 +766,37 @@ const tagEditTarget = ref<KnowledgeCard | null>(null);
 const batchTagDialogVisible = ref(false);
 const batchTagLoading = ref(false);
 const batchTagInitialTags = ref<Array<{ id: string; name: string; color?: string }>>([]);
+
+// Tag-by-folder dialog state
+const tagByFolderDialogVisible = ref(false);
+const tagByFolderTarget = ref<{ id: string; name: string } | null>(null);
+const tagByFolderLoading = ref(false);
+
+function openTagByFolderDialog(folder: { id: string; file_name?: string; name?: string }) {
+  tagByFolderTarget.value = { id: folder.id, name: folder.file_name || folder.name || '' };
+  tagByFolderDialogVisible.value = true;
+}
+
+async function confirmTagByFolder(payload: { tagIds: string[]; action: 'add' | 'remove'; recursive: boolean }) {
+  if (tagByFolderLoading.value || !tagByFolderTarget.value) return;
+  tagByFolderLoading.value = true;
+  try {
+    await tagByFolder(kbId.value, {
+      folder_ids: [tagByFolderTarget.value.id],
+      tag_ids: payload.tagIds,
+      action: payload.action,
+      recursive: payload.recursive,
+    });
+    MessagePlugin.success(t('tagByFolder.success'));
+    tagByFolderDialogVisible.value = false;
+    loadKnowledgeFiles(kbId.value);
+    loadTags(kbId.value, true);
+  } catch (error: any) {
+    MessagePlugin.error(error?.message || t('common.operationFailed'));
+  } finally {
+    tagByFolderLoading.value = false;
+  }
+}
 
 function openTagEditDialog(item: KnowledgeCard) {
   tagEditTarget.value = item;
@@ -2386,7 +2421,7 @@ const handleCardAction = (
 
 // Bridge list-view actions back to existing per-card handlers.
 const handleListAction = (
-  action: 'edit' | 'reparse' | 'cancel-parse' | 'move' | 'move-folder' | 'rename-folder' | 'delete' | 'view-trace' | 'batch-manage',
+  action: 'edit' | 'reparse' | 'cancel-parse' | 'move' | 'move-folder' | 'rename-folder' | 'tag-folder' | 'delete' | 'view-trace' | 'batch-manage',
   item: KnowledgeCard & { isFolder?: boolean },
 ) => {
   // Handle folder actions
@@ -2399,6 +2434,9 @@ const handleListAction = (
     }
     if (action === 'rename-folder') {
       handleRenameFolder(item as any);
+    }
+    if (action === 'tag-folder') {
+      openTagByFolderDialog(item as any);
     }
     return;
   }
@@ -2812,6 +2850,10 @@ async function createNewSession(value: string): Promise<void> {
                                   <t-icon name="folder-import" size="16px" />
                                   <span>{{ $t('knowledgeFolder.moveFolder') }}</span>
                                 </div>
+                                <div class="folder-card-menu-item" @click.stop="openTagByFolderDialog(f)">
+                                  <t-icon name="discount" size="16px" />
+                                  <span>{{ $t('tagByFolder.menuLabel') }}</span>
+                                </div>
                                 <t-popconfirm theme="warning"
                                   :content="$t('knowledgeFolder.confirmDeleteFolder', { name: f.file_name || '' })"
                                   :confirm-btn="{ content: $t('common.confirm'), theme: 'danger' }"
@@ -2941,6 +2983,18 @@ async function createNewSession(value: string): Promise<void> {
     :kb-id="kbId"
     :is-faq="isFAQ"
     @changed="onTagManageChanged"
+  />
+
+  <!-- Tag-by-folder dialog -->
+  <TagByFolderDialog
+    v-model:visible="tagByFolderDialogVisible"
+    :kb-id="kbId"
+    :folder-id="tagByFolderTarget?.id || ''"
+    :folder-name="tagByFolderTarget?.name || ''"
+    :tag-list="tagList"
+    :loading="tagByFolderLoading"
+    @confirm="confirmTagByFolder"
+    @tag-created="loadTags(kbId, true)"
   />
 
   <!-- Folder management dialog -->
@@ -4827,31 +4881,74 @@ async function createNewSession(value: string): Promise<void> {
   }
 }
 
-/* Folder card ⋯ menu */
+/* Folder card ⋯ menu — aligned with document .card-menu / .doc-action-menu-item */
 .folder-card-menu {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding: 4px;
-  min-width: 160px;
+  min-width: 140px;
+  gap: 1px;
 }
 .folder-card-menu-item {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   padding: 8px 12px;
-  border-radius: 4px;
-  font-size: 13px;
   cursor: pointer;
   color: var(--td-text-color-primary);
-  transition: background 0.12s;
+  transition: all 0.15s cubic-bezier(0.2, 0, 0, 1);
+  border-radius: 6px;
+  font-size: 14px;
+  line-height: 20px;
+
   &:hover {
     background: var(--td-bg-color-container-hover);
   }
+
+  &:active {
+    background: var(--td-bg-color-container-active);
+    transform: scale(0.98);
+  }
+
+  .t-icon {
+    font-size: 16px;
+    color: var(--td-text-color-secondary);
+    transition: color 0.15s ease;
+  }
+
+  &:hover .t-icon {
+    color: var(--td-text-color-primary);
+  }
+
   &.danger {
-    color: var(--td-error-color);
+    color: var(--td-error-color-6);
+    margin-top: 4px;
+    position: relative;
+
+    &::before {
+      content: '';
+      position: absolute;
+      top: -3px;
+      left: 8px;
+      right: 8px;
+      height: 1px;
+      background: var(--td-component-stroke);
+    }
+
+    .t-icon {
+      color: var(--td-error-color-6);
+    }
+
     &:hover {
       background: var(--td-error-color-1);
+      color: var(--td-error-color-6);
+
+      .t-icon {
+        color: var(--td-error-color-6);
+      }
+    }
+
+    &:active {
+      background: var(--td-error-color-2);
     }
   }
 }

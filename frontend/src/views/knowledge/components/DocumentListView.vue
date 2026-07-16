@@ -54,7 +54,7 @@ const emit = defineEmits<{
   (e: 'enter-folder', folderId: string): void;
   (e: 'toggle-row', id: string, checked: boolean, shiftKey: boolean): void;
   (e: 'toggle-all', checked: boolean): void;
-  (e: 'action', action: 'edit' | 'reparse' | 'cancel-parse' | 'move' | 'move-folder' | 'rename-folder' | 'delete' | 'view-trace' | 'batch-manage', item: KnowledgeItem): void;
+  (e: 'action', action: 'edit' | 'reparse' | 'cancel-parse' | 'move' | 'move-folder' | 'rename-folder' | 'tag-folder' | 'delete' | 'view-trace' | 'batch-manage', item: KnowledgeItem): void;
   (e: 'probe-trace', item: KnowledgeItem): void;
   (e: 'tag-edit', item: KnowledgeItem): void;
   // Move sub-flow emits
@@ -213,7 +213,7 @@ onBeforeUnmount(() => {
   stickyObserver = null;
 });
 
-const handleAction = (action: 'edit' | 'reparse' | 'cancel-parse' | 'move' | 'move-folder' | 'rename-folder' | 'delete' | 'view-trace' | 'batch-manage', item: KnowledgeItem) => {
+const handleAction = (action: 'edit' | 'reparse' | 'cancel-parse' | 'move' | 'move-folder' | 'rename-folder' | 'tag-folder' | 'delete' | 'view-trace' | 'batch-manage', item: KnowledgeItem) => {
   // Don't close popup for move — it triggers the move sub-flow
   if (action !== 'move') {
     moreOpen.value = null;
@@ -335,26 +335,40 @@ const handleAction = (action: 'edit' | 'reparse' | 'cancel-parse' | 'move' | 'mo
 
         <div class="cell cell-actions" v-if="canEdit" @click.stop>
           <template v-if="item.isFolder">
-            <button class="row-more-btn" type="button" :aria-label="$t('knowledgeFolder.renameFolder')"
-              @click="emit('action', 'rename-folder', item)">
-              <t-icon name="edit" size="16px" />
-            </button>
-            <button class="row-more-btn" type="button" :aria-label="$t('knowledgeFolder.moveFolder')"
-              @click="emit('move-folder', item)">
-              <t-icon name="folder-import" size="16px" />
-            </button>
-            <t-popconfirm
-              theme="warning"
-              :content="$t('knowledgeFolder.confirmDeleteFolder', { name: item.file_name || '' })"
-              :confirm-btn="{ content: $t('common.confirm'), theme: 'danger' }"
-              :cancel-btn="{ content: $t('common.cancel') }"
-              placement="left"
-              @confirm="emit('action', 'delete', item)"
-            >
-              <button class="row-more-btn" type="button" :aria-label="$t('knowledgeFolder.deleteFolder')">
-                <t-icon name="delete" size="16px" />
+            <t-popup trigger="click" placement="bottom-right" destroy-on-close>
+              <button class="row-more-btn" type="button" :aria-label="$t('knowledgeBase.more')" @click.stop>
+                <t-icon name="more" size="16px" />
               </button>
-            </t-popconfirm>
+              <template #content>
+                <div class="folder-row-menu">
+                  <div class="folder-row-menu-item" @click.stop="handleAction('rename-folder', item)">
+                    <t-icon name="edit" size="16px" />
+                    <span>{{ $t('knowledgeFolder.renameFolder') }}</span>
+                  </div>
+                  <div class="folder-row-menu-item" @click.stop="handleAction('move-folder', item)">
+                    <t-icon name="folder-import" size="16px" />
+                    <span>{{ $t('knowledgeFolder.moveFolder') }}</span>
+                  </div>
+                  <div class="folder-row-menu-item" @click.stop="handleAction('tag-folder', item)">
+                    <t-icon name="discount" size="16px" />
+                    <span>{{ $t('tagByFolder.menuLabel') }}</span>
+                  </div>
+                  <t-popconfirm
+                    theme="warning"
+                    :content="$t('knowledgeFolder.confirmDeleteFolder', { name: item.file_name || '' })"
+                    :confirm-btn="{ content: $t('common.confirm'), theme: 'danger' }"
+                    :cancel-btn="{ content: $t('common.cancel') }"
+                    placement="left"
+                    @confirm="emit('action', 'delete', item)"
+                  >
+                    <div class="folder-row-menu-item danger">
+                      <t-icon name="delete" size="16px" />
+                      <span>{{ $t('knowledgeFolder.deleteFolder') }}</span>
+                    </div>
+                  </t-popconfirm>
+                </div>
+              </template>
+            </t-popup>
           </template>
           <template v-else>
           <t-popup placement="bottom-right" trigger="click" destroy-on-close overlay-class-name="card-more"
@@ -796,6 +810,78 @@ const handleAction = (action: 'edit' | 'reparse' | 'cancel-parse' | 'move' | 'mo
     opacity: 1;
     background: var(--td-component-stroke);
     color: var(--td-text-color-primary);
+  }
+}
+
+.folder-row-menu {
+  display: flex;
+  flex-direction: column;
+  min-width: 140px;
+  gap: 1px;
+}
+
+.folder-row-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  cursor: pointer;
+  color: var(--td-text-color-primary);
+  transition: all 0.15s cubic-bezier(0.2, 0, 0, 1);
+  border-radius: 6px;
+  font-size: 14px;
+  line-height: 20px;
+
+  &:hover {
+    background: var(--td-bg-color-container-hover);
+  }
+
+  &:active {
+    background: var(--td-bg-color-container-active);
+    transform: scale(0.98);
+  }
+
+  .t-icon {
+    font-size: 16px;
+    color: var(--td-text-color-secondary);
+    transition: color 0.15s ease;
+  }
+
+  &:hover .t-icon {
+    color: var(--td-text-color-primary);
+  }
+
+  &.danger {
+    color: var(--td-error-color-6);
+    margin-top: 4px;
+    position: relative;
+
+    &::before {
+      content: '';
+      position: absolute;
+      top: -3px;
+      left: 8px;
+      right: 8px;
+      height: 1px;
+      background: var(--td-component-stroke);
+    }
+
+    .t-icon {
+      color: var(--td-error-color-6);
+    }
+
+    &:hover {
+      background: var(--td-error-color-1);
+      color: var(--td-error-color-6);
+
+      .t-icon {
+        color: var(--td-error-color-6);
+      }
+    }
+
+    &:active {
+      background: var(--td-error-color-2);
+    }
   }
 }
 

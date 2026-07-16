@@ -6,6 +6,7 @@ import (
 
 	"github.com/Tencent/WeKnora/internal/types"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // SetKnowledgeTags replaces all tags for a single knowledge entry.
@@ -89,5 +90,75 @@ func (r *knowledgeRepository) DeleteKnowledgeTagRelations(
 ) error {
 	return r.db.WithContext(ctx).
 		Where("knowledge_id = ?", knowledgeID).
+		Delete(&types.KnowledgeTagRelation{}).Error
+}
+
+// AddTagToKnowledgeBatch adds tag relations for multiple knowledge entries.
+// Uses ON CONFLICT DO NOTHING so entries that already carry the tag are silently skipped.
+func (r *knowledgeRepository) AddTagToKnowledgeBatch(
+	ctx context.Context,
+	knowledgeIDs []string,
+	tagIDs []string,
+) error {
+	if len(knowledgeIDs) == 0 || len(tagIDs) == 0 {
+		return nil
+	}
+	// Dedup both inputs. ON CONFLICT DO NOTHING only protects against rows
+	// already in the table, not duplicates within the same INSERT statement.
+	// PostgreSQL raises "ON CONFLICT DO NOTHING command cannot affect row a
+	// second time" if the same (knowledge_id, tag_id) pair appears twice in
+	// the batch. tagIDs come from request JSON and may contain dupes.
+	seenKid := make(map[string]struct{}, len(knowledgeIDs))
+	uniqueKids := make([]string, 0, len(knowledgeIDs))
+	for _, kid := range knowledgeIDs {
+		if _, dup := seenKid[kid]; dup {
+			continue
+		}
+		seenKid[kid] = struct{}{}
+		uniqueKids = append(uniqueKids, kid)
+	}
+	seenTid := make(map[string]struct{}, len(tagIDs))
+	uniqueTids := make([]string, 0, len(tagIDs))
+	for _, tid := range tagIDs {
+		if tid == "" {
+			continue
+		}
+		if _, dup := seenTid[tid]; dup {
+			continue
+		}
+		seenTid[tid] = struct{}{}
+		uniqueTids = append(uniqueTids, tid)
+	}
+	if len(uniqueKids) == 0 || len(uniqueTids) == 0 {
+		return nil
+	}
+	now := time.Now()
+	relations := make([]types.KnowledgeTagRelation, 0, len(uniqueKids)*len(uniqueTids))
+	for _, kid := range uniqueKids {
+		for _, tid := range uniqueTids {
+			relations = append(relations, types.KnowledgeTagRelation{
+				KnowledgeID: kid,
+				TagID:       tid,
+				CreatedAt:   now,
+			})
+		}
+	}
+	return r.db.WithContext(ctx).
+		Clauses(clause.OnConflict{DoNothing: true}).
+		CreateInBatches(relations, 500).Error
+}
+
+// RemoveTagFromKnowledgeBatch removes specific tags from multiple knowledge entries.
+// Only deletes associations matching both a tag ID in tagIDs and a knowledge ID in knowledgeIDs.
+func (r *knowledgeRepository) RemoveTagFromKnowledgeBatch(
+	ctx context.Context,
+	knowledgeIDs []string,
+	tagIDs []string,
+) error {
+	if len(knowledgeIDs) == 0 || len(tagIDs) == 0 {
+		return nil
+	}
+	return r.db.WithContext(ctx).
+		Where("knowledge_id IN ? AND tag_id IN ?", knowledgeIDs, tagIDs).
 		Delete(&types.KnowledgeTagRelation{}).Error
 }

@@ -238,6 +238,12 @@ type KnowledgeService interface {
 	ListFoldersByKB(ctx context.Context, tenantID uint64, kbID string) ([]types.FolderSummary, error)
 	// ListTagsByKB returns a summary of all tags in a KB for LLM consumption.
 	ListTagsByKB(ctx context.Context, tenantID uint64, kbID string) ([]types.TagSummary, error)
+	// TagByFolder adds or removes tags from all knowledge entries in a folder subtree.
+	// action is "add" or "remove". Returns the number of knowledge entries in the scope.
+	// Only document KBs are supported; FAQ KBs are rejected.
+	TagByFolder(ctx context.Context, kbID string, folderIDs []string, tagIDs []string, action string, recursive bool) (int64, error)
+	// CountKnowledgeByFolderIDs returns the number of knowledge entries in a folder scope.
+	CountKnowledgeByFolderIDs(ctx context.Context, tenantID uint64, kbID string, folderIDs []string, recursive bool) (int64, error)
 }
 
 // KnowledgeRepository defines the interface for knowledge repositories.
@@ -352,4 +358,13 @@ type KnowledgeRepository interface {
 	ListFoldersByKB(ctx context.Context, tenantID uint64, kbID string) ([]*types.KnowledgeFolder, error)
 	// CountKnowledgeByKB returns a map from folder_id to knowledge count.
 	CountKnowledgeByFolder(ctx context.Context, tenantID uint64, kbID string) (map[string]int64, error)
+	// AddTagToKnowledgeBatch adds tag relations for multiple knowledge entries.
+	// Uses INSERT ... ON CONFLICT DO NOTHING so entries that already carry the tag are skipped.
+	AddTagToKnowledgeBatch(ctx context.Context, knowledgeIDs []string, tagIDs []string) error
+	// RemoveTagFromKnowledgeBatch removes specific tags from multiple knowledge entries.
+	// Only deletes associations matching both a tag ID and a knowledge entry in the set.
+	RemoveTagFromKnowledgeBatch(ctx context.Context, knowledgeIDs []string, tagIDs []string) error
+	// CountKnowledgeByFolderIDs counts knowledge entries in the specified folder scope.
+	// When recursive is true, includes all descendant subfolders.
+	CountKnowledgeByFolderIDs(ctx context.Context, tenantID uint64, kbID string, folderIDs []string, recursive bool) (int64, error)
 }

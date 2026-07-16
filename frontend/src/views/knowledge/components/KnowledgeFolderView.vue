@@ -91,7 +91,7 @@
       :folder-tree="folderTree"
       :tree-loading="treeLoading"
       :current-folder-id="folderToMove?.parent_folder_id || null"
-      :disabled-folder-ids="folderToMove ? [folderToMove.id] : []"
+      :disabled-folder-ids="folderToMove ? getFolderDescendantIds(folderTree, [folderToMove.id]) : []"
       @confirm="handleConfirmFolderMove"
     />
   </div>
@@ -107,6 +107,7 @@ import FolderGridView from '@/views/knowledge/components/FolderGridView.vue';
 import FolderManageDialog from '@/views/knowledge/components/FolderManageDialog.vue';
 import FolderSelector from '@/views/knowledge/components/FolderSelector.vue';
 import { useKnowledgeFolder } from '@/composables/useKnowledgeFolder';
+import { getFolderDescendantIds } from '@/utils/knowledgeFolder';
 import { moveFolder } from '@/api/knowledge-folder';
 import type { KnowledgeFolder } from '@/types/knowledgeFolder';
 
