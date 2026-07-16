@@ -66,6 +66,7 @@ import FolderManageDialog from '@/views/knowledge/components/FolderManageDialog.
 import MoveKnowledgeDialog from '@/views/knowledge/components/MoveKnowledgeDialog.vue';
 import FolderSelector from '@/views/knowledge/components/FolderSelector.vue';
 import { useKnowledgeFolder } from '@/composables/useKnowledgeFolder';
+import { getFolderDescendantIds } from '@/utils/knowledgeFolder';
 import type { KnowledgeFolder } from '@/types/knowledgeFolder';
 import { useI18n } from 'vue-i18n';
 import { useMarqueeSelect } from '@/hooks/useMarqueeSelect';
@@ -409,8 +410,10 @@ const batchMoveFolders = ref<KnowledgeFolder[]>([]);
 const batchMoveKnowledgeIds = ref<string[]>([]);
 // Disabled folder IDs for the move-folder dialog.
 const folderMoveDisabledIds = computed(() => {
-  if (folderToMove.value) return [folderToMove.value.id];
-  return batchMoveFolders.value.map((f) => f.id);
+  const sourceIds = folderToMove.value
+    ? [folderToMove.value.id]
+    : batchMoveFolders.value.map((f) => f.id);
+  return getFolderDescendantIds(folderTree.value, sourceIds);
 });
 let movePollTimer: ReturnType<typeof setInterval> | null = null;
 
