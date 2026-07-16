@@ -1,7 +1,7 @@
--- Migration 000070: Knowledge Folders
+-- Migration 100001: Knowledge Folders
 -- Purpose: Add hierarchical folder support to knowledge bases
 
-DO $$ BEGIN RAISE NOTICE '[Migration 000070] Creating knowledge_folders table...'; END $$;
+DO $$ BEGIN RAISE NOTICE '[Migration 100001] Creating knowledge_folders table...'; END $$;
 
 CREATE TABLE IF NOT EXISTS knowledge_folders (
     id VARCHAR(36) PRIMARY KEY,
@@ -34,7 +34,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_folders_unique_name
     ON knowledge_folders(knowledge_base_id, COALESCE(parent_folder_id, '00000000-0000-0000-0000-000000000000'), name)
     WHERE deleted_at IS NULL;
 
-DO $$ BEGIN RAISE NOTICE '[Migration 000070] Adding folder_id column to knowledges...'; END $$;
+DO $$ BEGIN RAISE NOTICE '[Migration 100001] Adding folder_id column to knowledges...'; END $$;
 
 ALTER TABLE knowledges
     ADD COLUMN IF NOT EXISTS folder_id VARCHAR(36);
@@ -49,9 +49,9 @@ DO $$ BEGIN
             FOREIGN KEY (folder_id) REFERENCES knowledge_folders(id)
             ON DELETE SET NULL;
 EXCEPTION WHEN duplicate_object THEN
-    RAISE NOTICE '[Migration 000070] Constraint fk_knowledge_folder already exists, skipping';
+    RAISE NOTICE '[Migration 100001] Constraint fk_knowledge_folder already exists, skipping';
 END $$;
 
 CREATE INDEX IF NOT EXISTS idx_knowledges_folder ON knowledges(folder_id);
 
-DO $$ BEGIN RAISE NOTICE '[Migration 000070] Knowledge folders migration complete'; END $$;
+DO $$ BEGIN RAISE NOTICE '[Migration 100001] Knowledge folders migration complete'; END $$;
