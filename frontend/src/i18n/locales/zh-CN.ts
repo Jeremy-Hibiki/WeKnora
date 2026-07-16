@@ -562,7 +562,7 @@ export default {
     draftTip: "暂存内容，未参与检索",
     untitledDocument: "未命名文档",
     deleteDocument: "删除文档",
-    moveDocument: "移动到...",
+    moveDocument: "移动到知识库",
     moveToFolder: "移动到文件夹",
     moveToFolderSuccess: "已移动到目标文件夹",
     moveToFolderFailed: "移动到文件夹失败",

@@ -561,7 +561,7 @@ export default {
     draftTip: 'Temporarily saved and not included in retrieval',
     untitledDocument: 'Untitled Document',
     deleteDocument: 'Delete Document',
-    moveDocument: 'Move to...',
+    moveDocument: 'Move to knowledge base',
     moveToFolder: 'Move to Folder',
     moveToFolderSuccess: 'Moved to the target folder',
     moveToFolderFailed: 'Failed to move to folder',

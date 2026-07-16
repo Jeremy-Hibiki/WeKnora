@@ -482,7 +482,7 @@ export default {
     draftTip: 'Временно сохранён, не участвует в поиске',
     untitledDocument: 'Документ без названия',
     deleteDocument: 'Удалить документ',
-    moveDocument: 'Переместить в...',
+    moveDocument: 'Переместить в базу знаний',
     moveToFolder: 'Переместить в папку',
     moveToFolderSuccess: 'Перемещено в целевую папку',
     moveToFolderFailed: 'Не удалось переместить в папку',

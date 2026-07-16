@@ -816,36 +816,72 @@ const handleAction = (action: 'edit' | 'reparse' | 'cancel-parse' | 'move' | 'mo
 .folder-row-menu {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding: 4px;
-  min-width: 160px;
+  min-width: 140px;
+  gap: 1px;
 }
 
 .folder-row-menu-item {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   padding: 8px 12px;
-  border-radius: 4px;
-  font-size: 13px;
   cursor: pointer;
   color: var(--td-text-color-primary);
-  transition: background 0.12s;
+  transition: all 0.15s cubic-bezier(0.2, 0, 0, 1);
+  border-radius: 6px;
+  font-size: 14px;
+  line-height: 20px;
 
   &:hover {
     background: var(--td-bg-color-container-hover);
   }
 
-  &.danger {
-    color: var(--td-error-color);
-
-    &:hover {
-      background: var(--td-error-color-1);
-    }
+  &:active {
+    background: var(--td-bg-color-container-active);
+    transform: scale(0.98);
   }
 
   .t-icon {
-    flex-shrink: 0;
+    font-size: 16px;
+    color: var(--td-text-color-secondary);
+    transition: color 0.15s ease;
+  }
+
+  &:hover .t-icon {
+    color: var(--td-text-color-primary);
+  }
+
+  &.danger {
+    color: var(--td-error-color-6);
+    margin-top: 4px;
+    position: relative;
+
+    &::before {
+      content: '';
+      position: absolute;
+      top: -3px;
+      left: 8px;
+      right: 8px;
+      height: 1px;
+      background: var(--td-component-stroke);
+    }
+
+    .t-icon {
+      color: var(--td-error-color-6);
+    }
+
+    &:hover {
+      background: var(--td-error-color-1);
+      color: var(--td-error-color-6);
+
+      .t-icon {
+        color: var(--td-error-color-6);
+      }
+    }
+
+    &:active {
+      background: var(--td-error-color-2);
+    }
   }
 }
 

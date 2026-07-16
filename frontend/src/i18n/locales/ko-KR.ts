@@ -560,7 +560,7 @@ export default {
     draftTip: "임시 저장된 내용, 검색에 포함되지 않음",
     untitledDocument: "제목 없는 문서",
     deleteDocument: "문서 삭제",
-    moveDocument: "이동...",
+    moveDocument: "지식베이스로 이동",
     moveToFolder: "폴더로 이동",
     moveToFolderSuccess: "대상 폴더로 이동되었습니다",
     moveToFolderFailed: "폴더로 이동하지 못했습니다",
