@@ -46,6 +46,13 @@ type HousekeepingService struct {
 	// falls back to the span/updated_at heuristics alone.
 	inspector interfaces.TaskInspector
 
+	// pendingRepo lets the sweep scrub wiki ingest ops from
+	// task_pending_ops when it marks a knowledge row as failed. Without
+	// this, the wiki worker would re-execute on a failed document
+	// (isKnowledgeGone now checks ParseStatusFailed, but scrubbing at the
+	// source avoids waking the batch in the first place). nil-safe.
+	pendingRepo interfaces.TaskPendingOpsRepository
+
 	mu      sync.Mutex
 	started bool
 }
@@ -55,11 +62,13 @@ type HousekeepingService struct {
 // cron schedule cannot prevent the rest of the service from coming up.
 func NewHousekeepingService(
 	db *gorm.DB, cfg *config.Config, inspector interfaces.TaskInspector,
+	pendingRepo interfaces.TaskPendingOpsRepository,
 ) *HousekeepingService {
 	return &HousekeepingService{
-		db:        db,
-		cfg:       cfg,
-		inspector: inspector,
+		db:          db,
+		cfg:         cfg,
+		inspector:   inspector,
+		pendingRepo: pendingRepo,
 		cron: cron.New(cron.WithSeconds(), cron.WithChain(
 			cron.Recover(cron.DefaultLogger),
 		)),
@@ -175,6 +184,31 @@ func (h *HousekeepingService) runSweep(ctx context.Context) {
 		} else if res.RowsAffected > 0 {
 			logger.Infof(ctx, "[Housekeeping] recovered %d stuck knowledge rows (threshold=%s)",
 				res.RowsAffected, threshold)
+		}
+
+		// Scrub wiki ingest ops for each failed knowledge so the wiki
+		// worker doesn't re-execute on a document whose parse already
+		// failed. Matches the cancel/delete/reparse paths. Retract ops
+		// are preserved (DeleteByDedupKey filters to WikiOpIngest only).
+		// Only run when the UPDATE actually marked rows as failed — if
+		// res.Error != nil or RowsAffected == 0 (race: rows transitioned
+		// out of candidate status between candidate query and UPDATE),
+		// the rows were NOT marked failed and their wiki ops are still
+		// legitimately in flight.
+		// Best-effort: a DB error is logged and non-fatal so one row's
+		// scrub failure doesn't abort the sweep for the remaining rows.
+		if res.Error == nil && res.RowsAffected > 0 && h.pendingRepo != nil {
+			for _, k := range stuck {
+				if k.KnowledgeBaseID == "" || k.ID == "" {
+					continue
+				}
+				if err := h.pendingRepo.DeleteByDedupKey(ctx,
+					wikiTaskType, wikiTaskScope, k.KnowledgeBaseID, k.ID, WikiOpIngest); err != nil {
+					logger.Warnf(ctx, "[Housekeeping] failed to scrub wiki ops for knowledge %s: %v", k.ID, err)
+					continue
+				}
+				logger.Infof(ctx, "[Housekeeping] scrubbed wiki ingest ops for knowledge %s", k.ID)
+			}
 		}
 	}
 	if spanSkipped > 0 {
