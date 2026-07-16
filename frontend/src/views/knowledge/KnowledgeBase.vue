@@ -2418,7 +2418,7 @@ const handleCardAction = (
 
 // Bridge list-view actions back to existing per-card handlers.
 const handleListAction = (
-  action: 'edit' | 'reparse' | 'cancel-parse' | 'move' | 'move-folder' | 'rename-folder' | 'delete' | 'view-trace' | 'batch-manage',
+  action: 'edit' | 'reparse' | 'cancel-parse' | 'move' | 'move-folder' | 'rename-folder' | 'tag-folder' | 'delete' | 'view-trace' | 'batch-manage',
   item: KnowledgeCard & { isFolder?: boolean },
 ) => {
   // Handle folder actions
@@ -2431,6 +2431,9 @@ const handleListAction = (
     }
     if (action === 'rename-folder') {
       handleRenameFolder(item as any);
+    }
+    if (action === 'tag-folder') {
+      openTagByFolderDialog(item as any);
     }
     return;
   }

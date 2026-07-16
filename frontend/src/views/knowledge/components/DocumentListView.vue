@@ -54,7 +54,7 @@ const emit = defineEmits<{
   (e: 'enter-folder', folderId: string): void;
   (e: 'toggle-row', id: string, checked: boolean, shiftKey: boolean): void;
   (e: 'toggle-all', checked: boolean): void;
-  (e: 'action', action: 'edit' | 'reparse' | 'cancel-parse' | 'move' | 'move-folder' | 'rename-folder' | 'delete' | 'view-trace' | 'batch-manage', item: KnowledgeItem): void;
+  (e: 'action', action: 'edit' | 'reparse' | 'cancel-parse' | 'move' | 'move-folder' | 'rename-folder' | 'tag-folder' | 'delete' | 'view-trace' | 'batch-manage', item: KnowledgeItem): void;
   (e: 'probe-trace', item: KnowledgeItem): void;
   (e: 'tag-edit', item: KnowledgeItem): void;
   // Move sub-flow emits
@@ -213,7 +213,7 @@ onBeforeUnmount(() => {
   stickyObserver = null;
 });
 
-const handleAction = (action: 'edit' | 'reparse' | 'cancel-parse' | 'move' | 'move-folder' | 'rename-folder' | 'delete' | 'view-trace' | 'batch-manage', item: KnowledgeItem) => {
+const handleAction = (action: 'edit' | 'reparse' | 'cancel-parse' | 'move' | 'move-folder' | 'rename-folder' | 'tag-folder' | 'delete' | 'view-trace' | 'batch-manage', item: KnowledgeItem) => {
   // Don't close popup for move — it triggers the move sub-flow
   if (action !== 'move') {
     moreOpen.value = null;
@@ -335,26 +335,40 @@ const handleAction = (action: 'edit' | 'reparse' | 'cancel-parse' | 'move' | 'mo
 
         <div class="cell cell-actions" v-if="canEdit" @click.stop>
           <template v-if="item.isFolder">
-            <button class="row-more-btn" type="button" :aria-label="$t('knowledgeFolder.renameFolder')"
-              @click="emit('action', 'rename-folder', item)">
-              <t-icon name="edit" size="16px" />
-            </button>
-            <button class="row-more-btn" type="button" :aria-label="$t('knowledgeFolder.moveFolder')"
-              @click="emit('move-folder', item)">
-              <t-icon name="folder-import" size="16px" />
-            </button>
-            <t-popconfirm
-              theme="warning"
-              :content="$t('knowledgeFolder.confirmDeleteFolder', { name: item.file_name || '' })"
-              :confirm-btn="{ content: $t('common.confirm'), theme: 'danger' }"
-              :cancel-btn="{ content: $t('common.cancel') }"
-              placement="left"
-              @confirm="emit('action', 'delete', item)"
-            >
-              <button class="row-more-btn" type="button" :aria-label="$t('knowledgeFolder.deleteFolder')">
-                <t-icon name="delete" size="16px" />
+            <t-popup trigger="click" placement="bottom-right" destroy-on-close>
+              <button class="row-more-btn" type="button" :aria-label="$t('knowledgeBase.more')" @click.stop>
+                <t-icon name="more" size="16px" />
               </button>
-            </t-popconfirm>
+              <template #content>
+                <div class="folder-row-menu">
+                  <div class="folder-row-menu-item" @click.stop="handleAction('rename-folder', item)">
+                    <t-icon name="edit" size="16px" />
+                    <span>{{ $t('knowledgeFolder.renameFolder') }}</span>
+                  </div>
+                  <div class="folder-row-menu-item" @click.stop="handleAction('move-folder', item)">
+                    <t-icon name="folder-import" size="16px" />
+                    <span>{{ $t('knowledgeFolder.moveFolder') }}</span>
+                  </div>
+                  <div class="folder-row-menu-item" @click.stop="handleAction('tag-folder', item)">
+                    <t-icon name="discount" size="16px" />
+                    <span>{{ $t('tagByFolder.menuLabel') }}</span>
+                  </div>
+                  <t-popconfirm
+                    theme="warning"
+                    :content="$t('knowledgeFolder.confirmDeleteFolder', { name: item.file_name || '' })"
+                    :confirm-btn="{ content: $t('common.confirm'), theme: 'danger' }"
+                    :cancel-btn="{ content: $t('common.cancel') }"
+                    placement="left"
+                    @confirm="emit('action', 'delete', item)"
+                  >
+                    <div class="folder-row-menu-item danger">
+                      <t-icon name="delete" size="16px" />
+                      <span>{{ $t('knowledgeFolder.deleteFolder') }}</span>
+                    </div>
+                  </t-popconfirm>
+                </div>
+              </template>
+            </t-popup>
           </template>
           <template v-else>
           <t-popup placement="bottom-right" trigger="click" destroy-on-close overlay-class-name="card-more"
@@ -796,6 +810,42 @@ const handleAction = (action: 'edit' | 'reparse' | 'cancel-parse' | 'move' | 'mo
     opacity: 1;
     background: var(--td-component-stroke);
     color: var(--td-text-color-primary);
+  }
+}
+
+.folder-row-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px;
+  min-width: 160px;
+}
+
+.folder-row-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 4px;
+  font-size: 13px;
+  cursor: pointer;
+  color: var(--td-text-color-primary);
+  transition: background 0.12s;
+
+  &:hover {
+    background: var(--td-bg-color-container-hover);
+  }
+
+  &.danger {
+    color: var(--td-error-color);
+
+    &:hover {
+      background: var(--td-error-color-1);
+    }
+  }
+
+  .t-icon {
+    flex-shrink: 0;
   }
 }
 
