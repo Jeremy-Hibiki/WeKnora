@@ -60,7 +60,7 @@ import {
   knowledgeNeedsStatusPolling,
   shouldRefreshWikiStatusAfterKnowledgePoll,
 } from './wikiStatusRefresh';
-import { getKnowledgeMoveProgress } from '@/api/knowledge-base';
+import { getKnowledgeMoveProgress, listKnowledgeFiles } from '@/api/knowledge-base';
 import { batchMoveKnowledgeToFolder, moveFolder } from '@/api/knowledge-folder';
 import FolderManageDialog from '@/views/knowledge/components/FolderManageDialog.vue';
 import MoveKnowledgeDialog from '@/views/knowledge/components/MoveKnowledgeDialog.vue';
@@ -1453,6 +1453,36 @@ const handleMoveKnowledge = (item: KnowledgeCard) => {
   moveKbDialogVisible.value = true;
 };
 
+// Move a folder to another knowledge base: collect all knowledge entries in the
+// folder subtree, move them to the target KB, then delete the (now empty) folder.
+// This is a pragmatic implementation that uses the existing cross-KB move API.
+// Limitation: the folder structure itself is not preserved — only the knowledge
+// entries are moved. A full folder-tree migration would require backend support.
+const handleMoveFolderToKB = async (folder: KnowledgeFolder) => {
+  try {
+    // Fetch all knowledge entries in the folder subtree (recursive).
+    const res: any = await listKnowledgeFiles(kbId.value, {
+      page: 1,
+      page_size: 10000,
+      folder_scope: folder.id,
+    });
+    const entries = (res?.data || []) as any[];
+    if (entries.length === 0) {
+      MessagePlugin.warning(t('knowledgeFolder.moveFolderEmpty'));
+      return;
+    }
+    moveKbDialogIds.value = entries.map((e: any) => e.id);
+    moveKbDialogVisible.value = true;
+    // Remember the source folder so we can delete it after a successful move.
+    pendingDeleteFolderAfterMove.value = folder;
+  } catch (error: any) {
+    MessagePlugin.error(error?.message || t('knowledgeFolder.moveFolderFailed'));
+  }
+};
+
+// Track the folder that should be deleted after its contents are moved to another KB.
+const pendingDeleteFolderAfterMove = ref<KnowledgeFolder | null>(null);
+
 // Open the move-to-folder dialog for a single document.
 const handleMoveToFolder = (item: KnowledgeCard) => {
   item.isMore = false;
@@ -1589,6 +1619,15 @@ const handleMoveKbDialogMoved = (taskId?: string) => {
   } else {
     resetPage();
     loadKnowledgeFiles(kbId.value);
+    // If a folder move-to-KB just completed, delete the now-empty source folder.
+    if (pendingDeleteFolderAfterMove.value) {
+      const folder = pendingDeleteFolderAfterMove.value;
+      pendingDeleteFolderAfterMove.value = null;
+      handleDeleteFolder(folder.id, false).then(() => {
+        loadFolders(currentFolderId.value);
+        loadFolderTree();
+      });
+    }
   }
 };
 
@@ -2402,7 +2441,7 @@ const confirmCancelParseKnowledge = async (item: KnowledgeCard) => {
 
 // Bridge card-view actions back to existing per-card handlers.
 const handleCardAction = (
-  action: 'edit' | 'reparse' | 'cancel-parse' | 'move' | 'move-folder' | 'delete' | 'view-trace' | 'batch-manage',
+  action: 'edit' | 'reparse' | 'cancel-parse' | 'move' | 'move-folder' | 'move-folder-to-kb' | 'delete' | 'view-trace' | 'batch-manage',
   item: KnowledgeCard,
 ) => {
   const idx = (cardList.value || []).findIndex((i: KnowledgeCard) => i.id === item.id);
@@ -2414,6 +2453,7 @@ const handleCardAction = (
   if (action === 'cancel-parse') return confirmCancelParseKnowledge(item);
   if (action === 'move') return handleMoveKnowledge(item);
   if (action === 'move-folder') return handleMoveToFolder(item);
+  if (action === 'move-folder-to-kb') return handleMoveFolderToKB(item as unknown as KnowledgeFolder);
   if (action === 'delete') return confirmDeleteKnowledge(idx, item);
   if (action === 'view-trace') return handleViewTrace(idx, item);
   if (action === 'batch-manage') return handleEnterBatchFromCard(item);
@@ -2421,7 +2461,7 @@ const handleCardAction = (
 
 // Bridge list-view actions back to existing per-card handlers.
 const handleListAction = (
-  action: 'edit' | 'reparse' | 'cancel-parse' | 'move' | 'move-folder' | 'rename-folder' | 'tag-folder' | 'delete' | 'view-trace' | 'batch-manage',
+  action: 'edit' | 'reparse' | 'cancel-parse' | 'move' | 'move-folder' | 'rename-folder' | 'tag-folder' | 'move-folder-to-kb' | 'delete' | 'view-trace' | 'batch-manage',
   item: KnowledgeCard & { isFolder?: boolean },
 ) => {
   // Handle folder actions
@@ -2431,6 +2471,9 @@ const handleListAction = (
     }
     if (action === 'move-folder') {
       handleMoveFolder(item as any);
+    }
+    if (action === 'move-folder-to-kb') {
+      handleMoveFolderToKB(item as any);
     }
     if (action === 'rename-folder') {
       handleRenameFolder(item as any);
@@ -2849,6 +2892,10 @@ async function createNewSession(value: string): Promise<void> {
                                 <div class="folder-card-menu-item" @click.stop="handleMoveFolder(f)">
                                   <t-icon name="folder-import" size="16px" />
                                   <span>{{ $t('knowledgeFolder.moveFolder') }}</span>
+                                </div>
+                                <div class="folder-card-menu-item" @click.stop="handleMoveFolderToKB(f)">
+                                  <t-icon name="swap" size="16px" />
+                                  <span>{{ $t('knowledgeBase.moveToKnowledgeBase') }}</span>
                                 </div>
                                 <div class="folder-card-menu-item" @click.stop="openTagByFolderDialog(f)">
                                   <t-icon name="discount" size="16px" />

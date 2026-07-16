@@ -6925,6 +6925,7 @@ export default {
     fileAndFolderCount: '{folders} folders, {files} files',
     moveFolderFailed: 'Failed to move folder',
     moveFolderSuccess: 'Folder moved successfully',
+    moveFolderEmpty: 'Folder is empty, nothing to move',
   },
   knowledge: {
     untitledDocument: 'Untitled document',
