@@ -904,22 +904,24 @@ func (r *knowledgeRepository) CountKnowledgeByIDs(
 	return count, nil
 }
 
-// ListKnowledgeIDsByFolderIDs returns knowledge IDs that belong to the specified folders.
-// When recursive is true, it also includes knowledge from all descendant subfolders.
-// Use "__root__" as a folderID to include knowledge with folder_id IS NULL.
-func (r *knowledgeRepository) ListKnowledgeIDsByFolderIDs(
+// resolveFolderScope separates the "__root__" sentinel from normal folder IDs
+// and resolves descendants when recursive is true. It returns the resolved
+// folder IDs, whether root was requested, and whether any scope was produced
+// (ok=false means no-op: empty input or all branches invalid).
+//
+// This helper is shared by ListKnowledgeIDsByFolderIDs and CountKnowledgeByFolderIDs
+// to guarantee the count preview and the actual operation target the same set.
+func (r *knowledgeRepository) resolveFolderScope(
 	ctx context.Context,
-	tenantID uint64,
-	kbID string,
+	_ uint64, // tenantID reserved for future tenant-scoped folder queries
+	_ string, // kbID reserved for future KB-scoped folder queries
 	folderIDs []string,
 	recursive bool,
-) ([]string, error) {
+) (resolvedIDs []string, hasRoot bool, ok bool, err error) {
 	if len(folderIDs) == 0 {
-		return nil, nil
+		return nil, false, false, nil
 	}
 
-	// Separate __root__ from normal folder IDs
-	hasRoot := false
 	var normalIDs []string
 	for _, fid := range folderIDs {
 		if fid == "__root__" {
@@ -929,49 +931,79 @@ func (r *knowledgeRepository) ListKnowledgeIDsByFolderIDs(
 		}
 	}
 
-	// Resolve descendant folder IDs for recursive queries
-	resolvedIDs := make([]string, 0, len(normalIDs))
-	if len(normalIDs) > 0 {
-		if recursive {
-			// For each normal folder ID, find all descendant folder IDs via path LIKE
-			for _, fid := range normalIDs {
-				var folder types.KnowledgeFolder
-				if err := r.db.WithContext(ctx).
-					Select("path").
-					Where("id = ?", fid).
-					First(&folder).Error; err != nil {
-					// Skip invalid folder IDs (e.g. deleted)
-					continue
-				}
-				resolvedIDs = append(resolvedIDs, fid)
-				var descendantIDs []string
-				if err := r.db.WithContext(ctx).Model(&types.KnowledgeFolder{}).
-					Where("path LIKE ?", folder.Path+"%").
-					Where("id != ?", fid).
-					Pluck("id", &descendantIDs).Error; err != nil {
-					return nil, err
-				}
-				resolvedIDs = append(resolvedIDs, descendantIDs...)
-			}
-		} else {
-			resolvedIDs = normalIDs
-		}
+	if len(normalIDs) == 0 {
+		return nil, hasRoot, hasRoot, nil
 	}
 
-	// Build the knowledge query
+	if !recursive {
+		return normalIDs, hasRoot, true, nil
+	}
+
+	resolvedIDs = make([]string, 0, len(normalIDs))
+	for _, fid := range normalIDs {
+		var folder types.KnowledgeFolder
+		if err := r.db.WithContext(ctx).
+			Select("path").
+			Where("id = ?", fid).
+			First(&folder).Error; err != nil {
+			// Skip invalid/deleted folder IDs (record-not-found), not DB errors
+			continue
+		}
+		resolvedIDs = append(resolvedIDs, fid)
+		var descendantIDs []string
+		if err := r.db.WithContext(ctx).Model(&types.KnowledgeFolder{}).
+			Where("path LIKE ?", folder.Path+"%").
+			Where("id != ?", fid).
+			Pluck("id", &descendantIDs).Error; err != nil {
+			// Propagate DB errors loudly — silent partial expansion would make
+			// the tag operation target a subset without the user knowing.
+			return nil, false, false, err
+		}
+		resolvedIDs = append(resolvedIDs, descendantIDs...)
+	}
+
+	if len(resolvedIDs) == 0 && !hasRoot {
+		return nil, false, false, nil
+	}
+	return resolvedIDs, hasRoot, true, nil
+}
+
+// applyFolderScopeFilter applies the folder_id WHERE clause based on the
+// resolved scope. Both ListKnowledgeIDsByFolderIDs and CountKnowledgeByFolderIDs
+// use this to guarantee identical filtering.
+func applyFolderScopeFilter(query *gorm.DB, resolvedIDs []string, hasRoot bool) *gorm.DB {
+	if len(resolvedIDs) > 0 && hasRoot {
+		return query.Where("folder_id IN ? OR folder_id IS NULL", resolvedIDs)
+	} else if len(resolvedIDs) > 0 {
+		return query.Where("folder_id IN ?", resolvedIDs)
+	} else if hasRoot {
+		return query.Where("folder_id IS NULL")
+	}
+	return query.Where("1 = 0") // unreachable: caller checks ok=false
+}
+
+// When recursive is true, it also includes knowledge from all descendant subfolders.
+// Use "__root__" as a folderID to include knowledge with folder_id IS NULL.
+func (r *knowledgeRepository) ListKnowledgeIDsByFolderIDs(
+	ctx context.Context,
+	tenantID uint64,
+	kbID string,
+	folderIDs []string,
+	recursive bool,
+) ([]string, error) {
+	resolvedIDs, hasRoot, ok, err := r.resolveFolderScope(ctx, tenantID, kbID, folderIDs, recursive)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, nil
+	}
+
 	query := r.db.WithContext(ctx).Model(&types.Knowledge{}).
 		Where("tenant_id = ? AND knowledge_base_id = ? AND deleted_at IS NULL",
 			tenantID, kbID)
 
-	if len(resolvedIDs) > 0 && hasRoot {
-		query = query.Where("folder_id IN ? OR folder_id IS NULL", resolvedIDs)
-	} else if len(resolvedIDs) > 0 {
-		query = query.Where("folder_id IN ?", resolvedIDs)
-	} else if hasRoot {
-		query = query.Where("folder_id IS NULL")
-	} else {
-		return nil, nil
-	}
+	query = applyFolderScopeFilter(query, resolvedIDs, hasRoot)
 
 	var ids []string
 	if err := query.Pluck("id", &ids).Error; err != nil {
@@ -1016,6 +1048,38 @@ func (r *knowledgeRepository) ListFolderIDsWithDescendants(
 		resolvedIDs = append(resolvedIDs, descendantIDs...)
 	}
 	return resolvedIDs, nil
+}
+
+// CountKnowledgeByFolderIDs counts knowledge entries in the specified folder scope.
+// When recursive is true, includes all descendant subfolders.
+// Uses the same folder expansion logic as ListKnowledgeIDsByFolderIDs
+// via resolveFolderScope, guaranteeing the count matches the ID list.
+func (r *knowledgeRepository) CountKnowledgeByFolderIDs(
+	ctx context.Context,
+	tenantID uint64,
+	kbID string,
+	folderIDs []string,
+	recursive bool,
+) (int64, error) {
+	resolvedIDs, hasRoot, ok, err := r.resolveFolderScope(ctx, tenantID, kbID, folderIDs, recursive)
+	if err != nil {
+		return 0, err
+	}
+	if !ok {
+		return 0, nil
+	}
+
+	query := r.db.WithContext(ctx).Model(&types.Knowledge{}).
+		Where("tenant_id = ? AND knowledge_base_id = ? AND deleted_at IS NULL",
+			tenantID, kbID)
+
+	query = applyFolderScopeFilter(query, resolvedIDs, hasRoot)
+
+	var count int64
+	if err := query.Count(&count).Error; err != nil {
+		return 0, err
+	}
+	return count, nil
 }
 
 func (r *knowledgeRepository) ResolveFolderNames(

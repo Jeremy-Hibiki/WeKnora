@@ -96,3 +96,31 @@ export function moveKnowledgeToFolder(knowledgeId: string, data: MoveKnowledgeTo
 export function batchMoveKnowledgeToFolder(data: BatchMoveKnowledgeToFolderRequest) {
  return post('/api/v1/knowledge/batch-move-folder', data);
 }
+
+/**
+ * Bulk tag documents by folder — add or remove tags from all knowledge entries
+ * in a folder subtree. The folder is used as a selector.
+ */
+export function tagByFolder(
+ kbId: string,
+ data: { folder_ids: string[]; tag_ids: string[]; action: 'add' | 'remove'; recursive?: boolean },
+) {
+ return post(`/api/v1/knowledge-bases/${kbId}/folders/tag-bulk`, data);
+}
+
+/**
+ * Preview the number of knowledge entries in a folder scope.
+ * Uses the same expansion logic as tagByFolder to guarantee the count matches.
+ */
+export function countKnowledgeByFolderIDs(
+ kbId: string,
+ folderIds: string[],
+ recursive = true,
+) {
+ return get(`/api/v1/knowledge-bases/${kbId}/folders/count`, {
+ params: {
+ folder_ids: folderIds.join(','),
+ recursive,
+ },
+ });
+}

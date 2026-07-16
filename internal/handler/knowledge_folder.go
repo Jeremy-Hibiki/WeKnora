@@ -2,6 +2,7 @@ package handler
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/errors"
@@ -14,18 +15,21 @@ import (
 
 // KnowledgeFolderHandler handles HTTP requests for knowledge folder operations.
 type KnowledgeFolderHandler struct {
-	folderService interfaces.KnowledgeFolderService
-	kbService     interfaces.KnowledgeBaseService
+	folderService    interfaces.KnowledgeFolderService
+	kbService        interfaces.KnowledgeBaseService
+	knowledgeService interfaces.KnowledgeService
 }
 
 // NewKnowledgeFolderHandler creates a new knowledge folder handler instance.
 func NewKnowledgeFolderHandler(
 	folderService interfaces.KnowledgeFolderService,
 	kbService interfaces.KnowledgeBaseService,
+	knowledgeService interfaces.KnowledgeService,
 ) *KnowledgeFolderHandler {
 	return &KnowledgeFolderHandler{
-		folderService: folderService,
-		kbService:     kbService,
+		folderService:    folderService,
+		kbService:        kbService,
+		knowledgeService: knowledgeService,
 	}
 }
 
@@ -481,4 +485,138 @@ func (h *KnowledgeFolderHandler) GetBreadcrumb(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, breadcrumb)
+}
+
+// TagByFolderRequest is the DTO for bulk tag-by-folder operations.
+type TagByFolderRequest struct {
+	FolderIDs []string `json:"folder_ids" binding:"required,min=1"`
+	TagIDs    []string `json:"tag_ids" binding:"required,min=1"`
+	Action    string   `json:"action" binding:"required,oneof=add remove"`
+	Recursive *bool    `json:"recursive"`
+}
+
+// TagByFolder godoc
+// @Summary      Bulk tag documents by folder
+// @Description  Add or remove tags from all knowledge entries in a folder subtree. The folder is used as a selector — tags are written directly to knowledge_tag_relations. Only document KBs are supported.
+// @Tags         Folders
+// @Accept       json
+// @Produce      json
+// @Param        id   path      string  true  "Knowledge Base ID"
+// @Param        body body      TagByFolderRequest  true  "Tag-by-folder request"
+// @Success      200  {object}  map[string]interface{}
+// @Failure      400  {object}  errors.AppError
+// @Failure      403  {object}  errors.AppError
+// @Security     Bearer
+// @Security     ApiKeyAuth
+// @Router       /knowledge-bases/{id}/folders/tag-bulk [post]
+func (h *KnowledgeFolderHandler) TagByFolder(c *gin.Context) {
+	ctx := c.Request.Context()
+	kbID := secutils.SanitizeForLog(c.Param("id"))
+
+	// Defense-in-depth: verify tenant owns this KB (matches sibling folder handlers).
+	tenantID := c.GetUint64(types.TenantIDContextKey.String())
+	if tenantID == 0 {
+		c.JSON(http.StatusUnauthorized, errors.NewUnauthorizedError("Unauthorized"))
+		return
+	}
+	kb, err := h.kbService.GetKnowledgeBaseByID(ctx, kbID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, errors.NewNotFoundError("Knowledge base not found"))
+		return
+	}
+	if kb.TenantID != tenantID {
+		c.JSON(http.StatusForbidden, errors.NewForbiddenError("Knowledge base does not belong to this tenant"))
+		return
+	}
+
+	var req TagByFolderRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		logger.Warnf(ctx, "Invalid tag-by-folder request: %v", err)
+		c.JSON(http.StatusBadRequest, errors.NewBadRequestError("Invalid request body"))
+		return
+	}
+
+	recursive := true
+	if req.Recursive != nil {
+		recursive = *req.Recursive
+	}
+
+	affectedCount, err := h.knowledgeService.TagByFolder(ctx, kbID, req.FolderIDs, req.TagIDs, req.Action, recursive)
+	if err != nil {
+		// Map AppError to its HTTPCode; unknown errors get 500 with no leakage.
+		if appErr, ok := err.(*errors.AppError); ok {
+			c.JSON(appErr.HTTPCode, appErr)
+		} else {
+			logger.ErrorWithFields(ctx, err, map[string]interface{}{
+				"kb_id":   kbID,
+				"action":  req.Action,
+				"folders": len(req.FolderIDs),
+				"tags":    len(req.TagIDs),
+			})
+			c.JSON(http.StatusInternalServerError, errors.NewInternalServerError("Internal server error"))
+		}
+		return
+	}
+
+	logger.Infof(ctx, "TagByFolder: kb=%s action=%s affected=%d", kbID, req.Action, affectedCount)
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data": gin.H{
+			"affected_count": affectedCount,
+		},
+	})
+}
+
+// CountKnowledgeByFolderIDs godoc
+// @Summary      Count documents in folder scope
+// @Description  Returns the number of knowledge entries in a folder subtree. Read-only — used by the tag-by-folder dialog to preview affected document count.
+// @Tags         Folders
+// @Produce      json
+// @Param        id          path   string  true  "Knowledge Base ID"
+// @Param        folder_ids  query  string  true  "Comma-separated folder IDs"
+// @Param        recursive   query  bool    false "Include descendant subfolders (default true)"
+// @Success      200  {object}  map[string]interface{}
+// @Failure      403  {object}  errors.AppError
+// @Security     Bearer
+// @Security     ApiKeyAuth
+// @Router       /knowledge-bases/{id}/folders/count [get]
+func (h *KnowledgeFolderHandler) CountKnowledgeByFolderIDs(c *gin.Context) {
+	ctx := c.Request.Context()
+	kbID := secutils.SanitizeForLog(c.Param("id"))
+
+	tenantID := c.GetUint64(types.TenantIDContextKey.String())
+	if tenantID == 0 {
+		c.JSON(http.StatusUnauthorized, errors.NewUnauthorizedError("Unauthorized"))
+		return
+	}
+
+	folderIDsStr := c.Query("folder_ids")
+	if folderIDsStr == "" {
+		c.JSON(http.StatusBadRequest, errors.NewBadRequestError("folder_ids is required"))
+		return
+	}
+	folderIDs := strings.Split(folderIDsStr, ",")
+
+	recursive := true
+	if c.Query("recursive") == "false" {
+		recursive = false
+	}
+
+	count, err := h.knowledgeService.CountKnowledgeByFolderIDs(ctx, tenantID, kbID, folderIDs, recursive)
+	if err != nil {
+		if appErr, ok := err.(*errors.AppError); ok {
+			c.JSON(appErr.HTTPCode, appErr)
+		} else {
+			logger.Errorf(ctx, "CountKnowledgeByFolderIDs: %v", err)
+			c.JSON(http.StatusInternalServerError, errors.NewInternalServerError("Internal server error"))
+		}
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data": gin.H{
+			"count": count,
+		},
+	})
 }

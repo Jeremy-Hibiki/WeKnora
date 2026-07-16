@@ -38,5 +38,11 @@ func RegisterKnowledgeFolderRoutes(r *gin.RouterGroup, handler *handler.Knowledg
 
 		// Get breadcrumb path
 		folders.GET("/:folder_id/breadcrumb", g.Viewer(), g.KBAccessRead("id"), handler.GetBreadcrumb)
+
+		// Bulk tag by folder (add/remove tags from all docs in a folder subtree)
+		folders.POST("/tag-bulk", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), handler.TagByFolder)
+
+		// Preview document count in a folder scope (read-only, used by tag-by-folder dialog)
+		folders.GET("/count", g.Viewer(), g.KBAccessRead("id"), handler.CountKnowledgeByFolderIDs)
 	}
 }

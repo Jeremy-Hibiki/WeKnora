@@ -39,7 +39,7 @@ import {
   getKnowledgeDetails,
   type FolderUploadResult,
 } from "@/api/knowledge-base/index";
-import { createFolder } from "@/api/knowledge-folder";
+import { createFolder, tagByFolder, countKnowledgeByFolderIDs } from "@/api/knowledge-folder";
 import { knowledgeSpansPayloadHasTrace } from '@/utils/knowledgeTrace';
 import FAQEntryManager from './components/FAQEntryManager.vue';
 import DocumentListView from './components/DocumentListView.vue';
@@ -49,6 +49,7 @@ import IconButton from '@/components/IconButton.vue';
 import IconButtonGroup from '@/components/IconButtonGroup.vue';
 import KbUploadSourceDropdown from './components/KbUploadSourceDropdown.vue';
 import TagEditDialog from './components/TagEditDialog.vue';
+import TagByFolderDialog from './components/TagByFolderDialog.vue';
 import KbTagManageDrawer from './components/KbTagManageDrawer.vue';
 import type { KnowledgeProcessOverrides } from '@/types/knowledgeProcess';
 import { useUploadConfirmStore, type UploadConfirmResult } from '@/stores/uploadConfirm';
@@ -762,6 +763,37 @@ const tagEditTarget = ref<KnowledgeCard | null>(null);
 const batchTagDialogVisible = ref(false);
 const batchTagLoading = ref(false);
 const batchTagInitialTags = ref<Array<{ id: string; name: string; color?: string }>>([]);
+
+// Tag-by-folder dialog state
+const tagByFolderDialogVisible = ref(false);
+const tagByFolderTarget = ref<{ id: string; name: string } | null>(null);
+const tagByFolderLoading = ref(false);
+
+function openTagByFolderDialog(folder: { id: string; file_name?: string; name?: string }) {
+  tagByFolderTarget.value = { id: folder.id, name: folder.file_name || folder.name || '' };
+  tagByFolderDialogVisible.value = true;
+}
+
+async function confirmTagByFolder(payload: { tagIds: string[]; action: 'add' | 'remove'; recursive: boolean }) {
+  if (tagByFolderLoading.value || !tagByFolderTarget.value) return;
+  tagByFolderLoading.value = true;
+  try {
+    await tagByFolder(kbId.value, {
+      folder_ids: [tagByFolderTarget.value.id],
+      tag_ids: payload.tagIds,
+      action: payload.action,
+      recursive: payload.recursive,
+    });
+    MessagePlugin.success(t('tagByFolder.success'));
+    tagByFolderDialogVisible.value = false;
+    loadKnowledgeFiles(kbId.value);
+    loadTags(kbId.value, true);
+  } catch (error: any) {
+    MessagePlugin.error(error?.message || t('common.operationFailed'));
+  } finally {
+    tagByFolderLoading.value = false;
+  }
+}
 
 function openTagEditDialog(item: KnowledgeCard) {
   tagEditTarget.value = item;
@@ -2812,6 +2844,10 @@ async function createNewSession(value: string): Promise<void> {
                                   <t-icon name="folder-import" size="16px" />
                                   <span>{{ $t('knowledgeFolder.moveFolder') }}</span>
                                 </div>
+                                <div class="folder-card-menu-item" @click.stop="openTagByFolderDialog(f)">
+                                  <t-icon name="discount" size="16px" />
+                                  <span>{{ $t('tagByFolder.menuLabel') }}</span>
+                                </div>
                                 <t-popconfirm theme="warning"
                                   :content="$t('knowledgeFolder.confirmDeleteFolder', { name: f.file_name || '' })"
                                   :confirm-btn="{ content: $t('common.confirm'), theme: 'danger' }"
@@ -2941,6 +2977,18 @@ async function createNewSession(value: string): Promise<void> {
     :kb-id="kbId"
     :is-faq="isFAQ"
     @changed="onTagManageChanged"
+  />
+
+  <!-- Tag-by-folder dialog -->
+  <TagByFolderDialog
+    v-model:visible="tagByFolderDialogVisible"
+    :kb-id="kbId"
+    :folder-id="tagByFolderTarget?.id || ''"
+    :folder-name="tagByFolderTarget?.name || ''"
+    :tag-list="tagList"
+    :loading="tagByFolderLoading"
+    @confirm="confirmTagByFolder"
+    @tag-created="loadTags(kbId, true)"
   />
 
   <!-- Folder management dialog -->
