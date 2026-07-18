@@ -200,6 +200,10 @@ const (
 	// top of the asynq.TaskID coalescing).
 	wikiFinalizeLockTTL   = 60 * time.Second
 	wikiFinalizeLockRenew = 20 * time.Second
+
+	// wikiIngestCleanupTimeout bounds detached tail cleanup after the asynq
+	// task context has been cancelled or hit its timeout.
+	wikiIngestCleanupTimeout = 10 * time.Second
 )
 
 // wikiFinalizeChange is a doc-level add/remove entry for the index-intro
@@ -535,6 +539,13 @@ func (s *wikiIngestService) Handle(ctx context.Context, t *asynq.Task) error {
 	default:
 		return s.ProcessWikiIngest(ctx, t)
 	}
+}
+
+func wikiIngestCleanupContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithTimeout(context.WithoutCancel(ctx), wikiIngestCleanupTimeout)
 }
 
 // enqueueFinalize persists this batch's KB-global convergence work into the
@@ -920,9 +931,9 @@ func (s *wikiIngestService) decodePendingRows(ctx context.Context, rows []*types
 // trimPendingList deletes consumed rows from task_pending_ops. Empty
 // input is a no-op so callers can invoke unconditionally at the end
 // of a batch.
-func (s *wikiIngestService) trimPendingList(ctx context.Context, ids []int64) {
+func (s *wikiIngestService) trimPendingList(ctx context.Context, ids []int64) error {
 	if s.pendingRepo == nil || len(ids) == 0 {
-		return
+		return nil
 	}
 	// Detached context: the batch ctx may be cancelled by asynq timeout or
 	// graceful shutdown, but the successful ops MUST be removed from the
@@ -932,7 +943,9 @@ func (s *wikiIngestService) trimPendingList(ctx context.Context, ids []int64) {
 	defer cancel()
 	if err := s.pendingRepo.DeleteByIDs(dctx, ids); err != nil {
 		logger.Warnf(ctx, "wiki ingest: failed to trim %d pending rows: %v", len(ids), err)
+		return err
 	}
+	return nil
 }
 
 // finalizeWikiSubtask releases this knowledge's slot in the finalizing
@@ -966,13 +979,13 @@ func (s *wikiIngestService) finalizeWikiSubtask(ctx context.Context, knowledgeID
 //     (rows are ordered by id ASC and we never moved/touched it).
 //   - If the count exceeds the retry cap: archive the op into
 //     task_dead_letters and DeleteByIDs to remove it from the queue.
-//     Both writes are best-effort — a DB failure here is logged and
-//     swallowed so a single transient blip doesn't recursively spawn
-//     more failures.
-func (s *wikiIngestService) requeueFailedOps(ctx context.Context, payload WikiIngestPayload, ops []WikiPendingOp) {
+//     Settlement failures are returned so the caller does not mark claims
+//     settled while rows are still claimed or undeleted.
+func (s *wikiIngestService) requeueFailedOps(ctx context.Context, payload WikiIngestPayload, ops []WikiPendingOp) error {
 	if s.pendingRepo == nil || len(ops) == 0 {
-		return
+		return nil
 	}
+	var settleErrs []error
 	// Detached context: the batch ctx may be cancelled by asynq timeout or
 	// graceful shutdown. All failure-path DB writes MUST succeed — without
 	// IncrFailCount, fail_count never increments and the op never reaches
@@ -989,6 +1002,7 @@ func (s *wikiIngestService) requeueFailedOps(ctx context.Context, payload WikiIn
 		count, err := s.pendingRepo.IncrFailCount(dctx, op.dbID)
 		if err != nil {
 			logger.Warnf(ctx, "wiki ingest: failed to increment fail count for %s (id=%d): %v", op.KnowledgeID, op.dbID, err)
+			settleErrs = append(settleErrs, fmt.Errorf("increment fail count id=%d: %w", op.dbID, err))
 			// Without a fresh count we can't tell whether to drop. Be
 			// conservative: leave the row in place; the next PeekBatch
 			// will see it again and we'll try once more.
@@ -1002,6 +1016,7 @@ func (s *wikiIngestService) requeueFailedOps(ctx context.Context, payload WikiIn
 			// budget still counts down.
 			if err := s.pendingRepo.ReleaseByIDs(dctx, []int64{op.dbID}); err != nil {
 				logger.Warnf(ctx, "wiki ingest: failed to release claim for retry id=%d: %v", op.dbID, err)
+				settleErrs = append(settleErrs, fmt.Errorf("release retry claim id=%d: %w", op.dbID, err))
 			}
 			logger.Infof(ctx, "wiki ingest: re-queued failed op %s (%s) for retry (attempt %d/%d)", op.KnowledgeID, op.DocTitle, count, wikiMaxFailRetries)
 			continue
@@ -1029,12 +1044,15 @@ func (s *wikiIngestService) requeueFailedOps(ctx context.Context, payload WikiIn
 				FailCount: count,
 			}); dlErr != nil {
 				logger.Warnf(ctx, "wiki ingest: failed to archive op %s to dead letters: %v", op.KnowledgeID, dlErr)
+				settleErrs = append(settleErrs, fmt.Errorf("archive dead letter id=%d: %w", op.dbID, dlErr))
 			}
 		}
 		if err := s.pendingRepo.DeleteByIDs(dctx, []int64{op.dbID}); err != nil {
 			logger.Warnf(ctx, "wiki ingest: failed to drop dead-lettered row id=%d: %v", op.dbID, err)
+			settleErrs = append(settleErrs, fmt.Errorf("drop dead-lettered row id=%d: %w", op.dbID, err))
 		}
 	}
+	return errors.Join(settleErrs...)
 }
 
 // docIngestResult captures per-document info for batch post-processing.
