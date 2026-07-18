@@ -515,6 +515,13 @@ func (e *elasticsearchRepository) getBaseConds(params typesLocal.RetrieveParams)
 			},
 		})
 	}
+	if len(params.FolderIDs) > 0 {
+		must = append(must, map[string]interface{}{
+			"terms": map[string]interface{}{
+				e.idField("folder_id"): params.FolderIDs,
+			},
+		})
+	}
 	// Filter by tag IDs if specified
 	if len(params.TagIDs) > 0 {
 		must = append(must, map[string]interface{}{
@@ -1448,5 +1455,66 @@ func (e *elasticsearchRepository) BatchUpdateChunkTagID(
 	}
 
 	log.Infof("[ElasticsearchV7] Successfully batch updated chunk tag ID")
+	return nil
+}
+
+// BatchUpdateFolderID updates the folder ID of chunks in batch
+func (e *elasticsearchRepository) BatchUpdateFolderID(
+	ctx context.Context,
+	knowledgeFolderMap map[string]string,
+) error {
+	log := logger.GetLogger(ctx)
+	if len(knowledgeFolderMap) == 0 {
+		log.Warnf("[ElasticsearchV7] Knowledge folder map is empty, skipping update")
+		return nil
+	}
+
+	log.Infof("[ElasticsearchV7] Batch updating folder ID, count: %d", len(knowledgeFolderMap))
+
+	// Group knowledge IDs by folder ID for batch updates
+	folderGroups := make(map[string][]string)
+	for knowledgeID, folderID := range knowledgeFolderMap {
+		folderGroups[folderID] = append(folderGroups[folderID], knowledgeID)
+	}
+
+	// Batch update chunks for each folder ID using update_by_query
+	for folderID, knowledgeIDs := range folderGroups {
+		query := map[string]interface{}{
+			"query": map[string]interface{}{
+				"terms": map[string]interface{}{
+					e.idField("knowledge_id"): knowledgeIDs,
+				},
+			},
+			"script": map[string]interface{}{
+				"source": "ctx._source.folder_id = params.folder_id",
+				"lang":   "painless",
+				"params": map[string]interface{}{
+					"folder_id": folderID,
+				},
+			},
+		}
+		queryJSON, _ := json.Marshal(query)
+		res, err := esapi.UpdateByQueryRequest{
+			Index: []string{e.index},
+			Body:  strings.NewReader(string(queryJSON)),
+		}.Do(ctx, e.client)
+		if err != nil {
+			log.Errorf("[ElasticsearchV7] Failed to update chunks with folder_id %s: %v", folderID, err)
+			return err
+		}
+		defer res.Body.Close()
+		if res.IsError() {
+			var e map[string]interface{}
+			if err := json.NewDecoder(res.Body).Decode(&e); err != nil {
+				log.Errorf("[ElasticsearchV7] Error parsing the response body: %v", err)
+			} else {
+				log.Errorf("[ElasticsearchV7] Error updating chunks with folder_id: %v", e["error"])
+			}
+			return fmt.Errorf("elasticsearch update_by_query failed with status: %d", res.StatusCode)
+		}
+		log.Infof("[ElasticsearchV7] Updated %d knowledge entries to folder_id=%s", len(knowledgeIDs), folderID)
+	}
+
+	log.Infof("[ElasticsearchV7] Successfully batch updated folder ID")
 	return nil
 }

@@ -169,6 +169,9 @@ func (m *mockEngineService) BatchUpdateChunkEnabledStatus(_ context.Context, _ m
 func (m *mockEngineService) BatchUpdateChunkTagID(_ context.Context, _ map[string]string) error {
 	return nil
 }
+func (m *mockEngineService) BatchUpdateFolderID(_ context.Context, _ map[string]string) error {
+	return nil
+}
 
 // ---------------------------------------------------------------------------
 // CreateStore tests

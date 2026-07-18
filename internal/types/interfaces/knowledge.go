@@ -23,6 +23,7 @@ type KnowledgeService interface {
 		tagIDs []string,
 		channel string,
 		processOverrides *types.KnowledgeProcessOverrides,
+		folderID *string,
 	) (*types.Knowledge, error)
 	// CreateKnowledgeFromURL creates knowledge from a URL.
 	// When fileName or fileType is provided (or the URL path has a known file extension),
@@ -39,6 +40,7 @@ type KnowledgeService interface {
 		tagIDs []string,
 		channel string,
 		processOverrides *types.KnowledgeProcessOverrides,
+		folderID *string,
 	) (*types.Knowledge, error)
 	// CreateKnowledgeFromPassage creates knowledge from text passages.
 	// channel identifies the ingestion channel; empty defaults to "web".
@@ -175,6 +177,8 @@ type KnowledgeService interface {
 	ProcessQuestionGeneration(ctx context.Context, t *asynq.Task) error
 	// ProcessSummaryGeneration handles Asynq summary generation tasks
 	ProcessSummaryGeneration(ctx context.Context, t *asynq.Task) error
+	// ProcessParentSummaryGeneration handles Asynq parent chunk summary generation tasks
+	ProcessParentSummaryGeneration(ctx context.Context, t *asynq.Task) error
 	// ProcessKBClone handles Asynq knowledge base clone tasks
 	ProcessKBClone(ctx context.Context, t *asynq.Task) error
 	// ProcessKnowledgeMove handles Asynq knowledge move tasks
@@ -200,6 +204,46 @@ type KnowledgeService interface {
 	SearchKnowledge(ctx context.Context, keyword string, offset, limit int, fileTypes []string) ([]*types.Knowledge, bool, int64, error)
 	// SearchKnowledgeForScopes searches knowledge within the given (tenant_id, kb_id) scopes (e.g. for shared agent context).
 	SearchKnowledgeForScopes(ctx context.Context, scopes []types.KnowledgeSearchScope, keyword string, offset, limit int, fileTypes []string) ([]*types.Knowledge, bool, int64, error)
+	// MoveToFolder moves a single knowledge entry to a folder.
+	MoveToFolder(ctx context.Context, knowledgeID string, folderID *string) error
+	// BatchMoveToFolder moves multiple knowledge entries to a folder.
+	BatchMoveToFolder(ctx context.Context, kbID string, knowledgeIDs []string, folderID *string) error
+	// CountKnowledgeByIDs returns the number of knowledge entries owned by the
+	// tenant and KB that match the given IDs. Used to validate batch operations
+	// without loading every row.
+	CountKnowledgeByIDs(ctx context.Context, tenantID uint64, kbID string, knowledgeIDs []string) (int64, error)
+	// ListKnowledgeIDsByFolderIDs returns knowledge IDs that belong to the specified folders.
+	// When recursive is true, it also includes knowledge from all descendant subfolders.
+	// Use "__root__" as a folderID to include knowledge with folder_id IS NULL.
+	ListKnowledgeIDsByFolderIDs(ctx context.Context, tenantID uint64, kbID string, folderIDs []string, recursive bool) ([]string, error)
+	// ListFolderIDsWithDescendants expands the given folder IDs to include all
+	// descendant folder IDs via the materialized path. Returns the input IDs
+	// plus all descendants. Non-existent or deleted folder IDs are silently
+	// skipped. The "__root__" sentinel is returned as-is.
+	ListFolderIDsWithDescendants(ctx context.Context, tenantID uint64, kbID string, folderIDs []string) ([]string, error)
+	// BackfillFolderMetadata backfills folder_id metadata in vector stores
+	// for existing chunks. If kbID is empty, all knowledge bases across all
+	// tenants are processed; otherwise only the specified KB is processed.
+	// Returns a result with per-KB error details — individual KB failures do
+	// not abort the sweep.
+	BackfillFolderMetadata(ctx context.Context, kbID string) (*types.BackfillResult, error)
+	// ResolveFolderNames resolves human-readable folder names to folder IDs within a KB.
+	// Case-insensitive leaf-name match. Returns all matching folder IDs (union).
+	// Names that don't match any folder are silently skipped.
+	ResolveFolderNames(ctx context.Context, tenantID uint64, kbID string, names []string) ([]string, error)
+	// ResolveTagNames resolves human-readable tag names to tag IDs within a KB.
+	// Case-insensitive match. Returns all matching tag IDs.
+	ResolveTagNames(ctx context.Context, tenantID uint64, kbID string, names []string) ([]string, error)
+	// ListFoldersByKB returns a summary of all folders in a KB for LLM consumption.
+	ListFoldersByKB(ctx context.Context, tenantID uint64, kbID string) ([]types.FolderSummary, error)
+	// ListTagsByKB returns a summary of all tags in a KB for LLM consumption.
+	ListTagsByKB(ctx context.Context, tenantID uint64, kbID string) ([]types.TagSummary, error)
+	// TagByFolder adds or removes tags from all knowledge entries in a folder subtree.
+	// action is "add" or "remove". Returns the number of knowledge entries in the scope.
+	// Only document KBs are supported; FAQ KBs are rejected.
+	TagByFolder(ctx context.Context, kbID string, folderIDs []string, tagIDs []string, action string, recursive bool) (int64, error)
+	// CountKnowledgeByFolderIDs returns the number of knowledge entries in a folder scope.
+	CountKnowledgeByFolderIDs(ctx context.Context, tenantID uint64, kbID string, folderIDs []string, recursive bool) (int64, error)
 }
 
 // KnowledgeRepository defines the interface for knowledge repositories.
@@ -274,4 +318,53 @@ type KnowledgeRepository interface {
 	GetKnowledgeTags(ctx context.Context, knowledgeIDs []string) (map[string][]*types.KnowledgeTag, error)
 	// DeleteKnowledgeTagRelations deletes all tag relations for a knowledge entry.
 	DeleteKnowledgeTagRelations(ctx context.Context, knowledgeID string) error
+	// ListPagedKnowledgeByFolderID lists knowledge entries directly under a folder with pagination.
+	// When recursive is true, also includes entries from all descendant subfolders.
+	ListPagedKnowledgeByFolderID(
+		ctx context.Context,
+		tenantID uint64,
+		kbID string,
+		folderID string,
+		recursive bool,
+		page *types.Pagination,
+		filter types.KnowledgeListFilter,
+	) ([]*types.Knowledge, int64, error)
+	// UpdateKnowledgeFolderID moves a single knowledge entry to a folder.
+	// folderID can be nil to move the entry to root.
+	UpdateKnowledgeFolderID(ctx context.Context, knowledgeID string, folderID *string) error
+	// BatchUpdateKnowledgeFolderID moves multiple knowledge entries to a folder.
+	// folderID can be nil to move entries to root. The update is scoped by tenant
+	// and KB as a defense-in-depth guard.
+	BatchUpdateKnowledgeFolderID(ctx context.Context, tenantID uint64, kbID string, knowledgeIDs []string, folderID *string) error
+	// CountKnowledgeByIDs returns the number of knowledge entries owned by the
+	// tenant and KB that match the given IDs.
+	CountKnowledgeByIDs(ctx context.Context, tenantID uint64, kbID string, knowledgeIDs []string) (int64, error)
+	// ListKnowledgeIDsByFolderIDs returns knowledge IDs that belong to the specified folders.
+	// When recursive is true, it also includes knowledge from all descendant subfolders.
+	// Use "__root__" as a folderID to include knowledge with folder_id IS NULL.
+	ListKnowledgeIDsByFolderIDs(
+		ctx context.Context,
+		tenantID uint64,
+		kbID string,
+		folderIDs []string,
+		recursive bool,
+	) ([]string, error)
+	// ListFolderIDsWithDescendants expands the given folder IDs to include all
+	// descendant folder IDs via the materialized path.
+	ListFolderIDsWithDescendants(ctx context.Context, tenantID uint64, kbID string, folderIDs []string) ([]string, error)
+	// ResolveFolderNames resolves folder names to IDs within a KB (case-insensitive).
+	ResolveFolderNames(ctx context.Context, tenantID uint64, kbID string, names []string) ([]string, error)
+	// ListFoldersByKB returns all folders in a KB.
+	ListFoldersByKB(ctx context.Context, tenantID uint64, kbID string) ([]*types.KnowledgeFolder, error)
+	// CountKnowledgeByKB returns a map from folder_id to knowledge count.
+	CountKnowledgeByFolder(ctx context.Context, tenantID uint64, kbID string) (map[string]int64, error)
+	// AddTagToKnowledgeBatch adds tag relations for multiple knowledge entries.
+	// Uses INSERT ... ON CONFLICT DO NOTHING so entries that already carry the tag are skipped.
+	AddTagToKnowledgeBatch(ctx context.Context, knowledgeIDs []string, tagIDs []string) error
+	// RemoveTagFromKnowledgeBatch removes specific tags from multiple knowledge entries.
+	// Only deletes associations matching both a tag ID and a knowledge entry in the set.
+	RemoveTagFromKnowledgeBatch(ctx context.Context, knowledgeIDs []string, tagIDs []string) error
+	// CountKnowledgeByFolderIDs counts knowledge entries in the specified folder scope.
+	// When recursive is true, includes all descendant subfolders.
+	CountKnowledgeByFolderIDs(ctx context.Context, tenantID uint64, kbID string, folderIDs []string, recursive bool) (int64, error)
 }

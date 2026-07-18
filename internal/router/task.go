@@ -310,6 +310,9 @@ func RunAsynqServer(params AsynqTaskParams) *asynq.ServeMux {
 	mux.HandleFunc(types.TypeWikiIngest, params.WikiIngest.Handle)
 	mux.HandleFunc(types.TypeWikiFinalize, params.WikiIngest.Handle)
 
+	// Register parent summary generation handler
+	mux.HandleFunc(types.TypeParentSummaryGeneration, params.KnowledgeService.ProcessParentSummaryGeneration)
+
 	// Run the same mux on every pool. Shared and dedicated servers intentionally
 	// overlap, but Redis dequeue is atomic, so each task still executes once.
 	runPool := func(name string, srv *asynq.Server) {

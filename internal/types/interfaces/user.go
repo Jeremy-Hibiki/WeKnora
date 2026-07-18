@@ -37,10 +37,6 @@ type UserService interface {
 	DeleteUser(ctx context.Context, id string) error
 	// ChangePassword changes user password
 	ChangePassword(ctx context.Context, userID string, oldPassword, newPassword string) error
-	// AdminResetPassword replaces a user's password without requiring the old
-	// password and revokes all of that user's existing sessions. Callers must
-	// enforce the system-admin and cannot-reset-self guards before invoking it.
-	AdminResetPassword(ctx context.Context, userID string, newPassword string) error
 	// ValidatePassword validates user password
 	ValidatePassword(ctx context.Context, userID string, password string) error
 	// GenerateTokens generates access and refresh tokens for user
@@ -86,6 +82,25 @@ type UserService interface {
 	// preferences blob (PATCH semantics: only keys present in `patch`
 	// overwrite existing values). Returns the updated, persisted prefs.
 	UpdateUserPreferences(ctx context.Context, userID string, patch types.UserPreferences) (types.UserPreferences, error)
+	// ListAllUsers lists every user with optional substring search
+	// over username / email, returning the page plus the total count.
+	// SystemAdmin-only surface; the handler enforces the role gate.
+	ListAllUsers(ctx context.Context, search string, offset, limit int) ([]*types.User, int64, error)
+	// AdminCreateUser creates a new user account on behalf of a system
+	// administrator. Unlike Register, it bypasses the public registration
+	// mode (the actor's SystemAdmin role is the authorisation) and does
+	// not issue login tokens — the new user must sign in themselves. The
+	// returned User is the persisted row.
+	AdminCreateUser(ctx context.Context, req *types.RegisterRequest) (*types.User, error)
+	// SetUserActive enables or disables a user. When disabling, every
+	// outstanding session token for the user is revoked so a disabled
+	// user cannot keep using an existing access token.
+	SetUserActive(ctx context.Context, userID string, active bool) (*types.User, error)
+	// AdminResetPassword resets a user's password without requiring the
+	// old password (the SystemAdmin caller is the authorisation). Every
+	// outstanding session token for the user is revoked so a stolen token
+	// cannot survive the reset.
+	AdminResetPassword(ctx context.Context, userID, newPassword string) error
 }
 
 // UserRepository defines the user repository interface
@@ -119,6 +134,12 @@ type UserRepository interface {
 	RevokeSystemAdmin(ctx context.Context, userID, actorID string) (*types.User, error)
 	// SearchUsers searches users by username or email
 	SearchUsers(ctx context.Context, query string, limit int) ([]*types.User, error)
+	// ListAllUsers lists every user with optional substring search
+	// over username / email, returning the page plus the total count
+	// (matching the search filter) so the admin UI can render
+	// pagination metadata in one round-trip. An empty `search` returns
+	// every user. Used by GET /api/v1/system/admin/users.
+	ListAllUsers(ctx context.Context, search string, offset, limit int) ([]*types.User, int64, error)
 }
 
 // AuthTokenRepository defines the auth token repository interface

@@ -170,6 +170,7 @@ export interface TenantInfo {
   created_at: string
   updated_at: string
   knowledge_bases?: KnowledgeBaseInfo[]
+  api_key?: string
 }
 
 // 知识库信息接口

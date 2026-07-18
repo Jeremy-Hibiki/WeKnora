@@ -21,10 +21,13 @@ interface KnowledgeItem {
   parse_status?: string;
   summary_status?: string;
   updated_at?: string;
+  created_at?: string;
   source?: string;
   description?: string;
   channel?: string;
   isMore?: boolean;
+  isFolder?: boolean;
+  knowledge_count?: number;
 }
 
 const props = defineProps<{
@@ -42,13 +45,16 @@ const props = defineProps<{
   moveSelectedTargetName: string;
   moveMode: 'reuse_vectors' | 'reparse';
   moveSubmitting: boolean;
+  /** Whether the current KB has any folders (gates the "move to folder" menu item). */
+  folderTreePresent?: boolean;
 }>();
 
 const emit = defineEmits<{
   (e: 'open', item: KnowledgeItem): void;
+  (e: 'enter-folder', folderId: string): void;
   (e: 'toggle-row', id: string, checked: boolean, shiftKey: boolean): void;
   (e: 'toggle-all', checked: boolean): void;
-  (e: 'action', action: 'edit' | 'reparse' | 'cancel-parse' | 'move' | 'delete' | 'view-trace' | 'batch-manage', item: KnowledgeItem): void;
+  (e: 'action', action: 'edit' | 'reparse' | 'cancel-parse' | 'move' | 'move-folder' | 'rename-folder' | 'tag-folder' | 'delete' | 'view-trace' | 'batch-manage', item: KnowledgeItem): void;
   (e: 'probe-trace', item: KnowledgeItem): void;
   (e: 'tag-edit', item: KnowledgeItem): void;
   // Move sub-flow emits
@@ -57,6 +63,7 @@ const emit = defineEmits<{
   (e: 'move-confirm'): void;
   (e: 'update:moveMode', mode: 'reuse_vectors' | 'reparse'): void;
   (e: 'reset-move-state'): void;
+  (e: 'move-folder', folder: KnowledgeItem): void;
 }>();
 
 const { t } = useI18n();
@@ -158,10 +165,12 @@ const statusByRow = computed(() => {
 });
 
 const allSelected = computed(() => {
-  return props.items.length > 0 && props.items.every(i => props.selectedIds.has(i.id));
+  const docItems = props.items.filter(i => !i.isFolder);
+  return docItems.length > 0 && docItems.every(i => props.selectedIds.has(i.id));
 });
 const someSelected = computed(() => {
-  return props.items.some(i => props.selectedIds.has(i.id)) && !allSelected.value;
+  const docItems = props.items.filter(i => !i.isFolder);
+  return docItems.some(i => props.selectedIds.has(i.id)) && !allSelected.value;
 });
 
 const onHeaderCheckboxChange = (checked: boolean) => {
@@ -204,7 +213,7 @@ onBeforeUnmount(() => {
   stickyObserver = null;
 });
 
-const handleAction = (action: 'edit' | 'reparse' | 'cancel-parse' | 'move' | 'delete' | 'view-trace' | 'batch-manage', item: KnowledgeItem) => {
+const handleAction = (action: 'edit' | 'reparse' | 'cancel-parse' | 'move' | 'move-folder' | 'rename-folder' | 'tag-folder' | 'delete' | 'view-trace' | 'batch-manage', item: KnowledgeItem) => {
   // Don't close popup for move — it triggers the move sub-flow
   if (action !== 'move') {
     moreOpen.value = null;
@@ -234,26 +243,30 @@ const handleAction = (action: 'edit' | 'reparse' | 'cancel-parse' | 'move' | 'de
 
     <div class="doc-list-body">
       <div v-for="item in items" :key="item.id" class="doc-list-row"
-        :class="{ selected: selectedIds.has(item.id), 'menu-open': moreOpen === item.id }" :data-select-id="item.id"
-        role="row" @click="emit('open', item)">
+        :class="{ selected: !item.isFolder && selectedIds.has(item.id), 'menu-open': moreOpen === item.id, 'is-folder': item.isFolder }" :data-select-id="item.isFolder ? undefined : item.id"
+        role="row" @click="item.isFolder ? emit('enter-folder', item.id) : emit('open', item)">
         <div class="cell cell-check" @click.stop>
-          <t-checkbox class="doc-list-check" size="small" :checked="selectedIds.has(item.id)" :title="item.file_name"
+          <t-checkbox v-if="!item.isFolder" class="doc-list-check" size="small" :checked="selectedIds.has(item.id)" :title="item.file_name"
             @change="(c: boolean, ctx?: { e?: Event }) => onRowCheckboxChange(item, c, ctx)" />
         </div>
 
         <div class="cell cell-name">
           <span class="row-file-icon-wrap">
-            <t-icon :name="getFileIcon(item)" />
+            <t-icon v-if="item.isFolder" name="folder" class="folder-row-icon" />
+            <t-icon v-else :name="getFileIcon(item)" />
           </span>
           <div class="row-file-text">
             <span class="row-file-name" :title="item.file_name">{{ item.file_name }}</span>
-            <span v-if="item.description" class="row-file-desc" :title="item.description">{{ item.description }}</span>
+            <span v-if="item.description && !item.isFolder" class="row-file-desc" :title="item.description">{{ item.description }}</span>
           </div>
         </div>
 
 
         <div class="cell cell-tag">
-          <template v-if="item.tags && item.tags.length > 0">
+          <template v-if="item.isFolder">
+            <span class="row-muted">--</span>
+          </template>
+          <template v-else-if="item.tags && item.tags.length > 0">
             <t-tooltip v-if="hasTagOverflow(item.id, (item.tags || []).length)"
               :content="(item.tags || []).map((t: any) => t.name).join(', ')" placement="top">
               <div class="row-tag-chips" :ref="(el: any) => setupTagChipsObserver(el, item.id, (item.tags || []).length)"
@@ -279,33 +292,85 @@ const handleAction = (action: 'edit' | 'reparse' | 'cancel-parse' | 'move' | 'de
         </div>
 
         <div class="cell cell-source">
-          <t-icon class="row-source-icon" :name="getSourceInfo(item).icon" />
-          <span class="row-source-label">{{ getSourceInfo(item).label }}</span>
+          <template v-if="item.isFolder">
+            <span class="row-muted">--</span>
+          </template>
+          <template v-else>
+            <t-icon class="row-source-icon" :name="getSourceInfo(item).icon" />
+            <span class="row-source-label">{{ getSourceInfo(item).label }}</span>
+          </template>
         </div>
 
         <div class="cell cell-size">
-          <span class="row-mono">{{ formatFileSize(item.file_size) || '--' }}</span>
+          <template v-if="item.isFolder">
+            <span class="row-mono">{{ $t('knowledgeFolder.itemCount', { count: item.knowledge_count ?? 0 }) }}</span>
+          </template>
+          <template v-else>
+            <span class="row-mono">{{ formatFileSize(item.file_size) || '--' }}</span>
+          </template>
         </div>
 
         <div class="cell cell-status">
-          <template v-if="statusByRow.get(item.id) as StatusInfo | undefined">
-            <t-tag v-if="statusByRow.get(item.id)!.label !== '--'" size="small" :theme="statusByRow.get(item.id)!.theme"
-              variant="light-outline" class="row-status-tag">
-              <template v-if="statusByRow.get(item.id)!.icon" #icon>
-                <t-icon :name="statusByRow.get(item.id)!.icon!"
-                  :class="{ 'icon-spin': statusByRow.get(item.id)!.spin }" />
-              </template>
-              {{ statusByRow.get(item.id)!.label }}
-            </t-tag>
-            <span v-else class="row-muted">--</span>
+          <template v-if="item.isFolder">
+            <span class="row-muted">--</span>
+          </template>
+          <template v-else>
+            <template v-if="statusByRow.get(item.id) as StatusInfo | undefined">
+              <t-tag v-if="statusByRow.get(item.id)!.label !== '--'" size="small" :theme="statusByRow.get(item.id)!.theme"
+                variant="light-outline" class="row-status-tag">
+                <template v-if="statusByRow.get(item.id)!.icon" #icon>
+                  <t-icon :name="statusByRow.get(item.id)!.icon!"
+                    :class="{ 'icon-spin': statusByRow.get(item.id)!.spin }" />
+                </template>
+                {{ statusByRow.get(item.id)!.label }}
+              </t-tag>
+              <span v-else class="row-muted">--</span>
+            </template>
           </template>
         </div>
 
         <div class="cell cell-time">
-          <span class="row-mono">{{ formatTime(item.updated_at) }}</span>
+          <span class="row-mono">{{ formatTime(item.created_at || item.updated_at) }}</span>
         </div>
 
         <div class="cell cell-actions" v-if="canEdit" @click.stop>
+          <template v-if="item.isFolder">
+            <t-popup trigger="click" placement="bottom-right" destroy-on-close>
+              <button class="row-more-btn" type="button" :aria-label="$t('knowledgeBase.more')" @click.stop>
+                <t-icon name="more" size="16px" />
+              </button>
+              <template #content>
+                <div class="folder-row-menu">
+                  <div class="folder-row-menu-item" @click.stop="handleAction('rename-folder', item)">
+                    <t-icon name="edit" size="16px" />
+                    <span>{{ $t('knowledgeFolder.renameFolder') }}</span>
+                  </div>
+                  <div class="folder-row-menu-item" @click.stop="handleAction('move-folder', item)">
+                    <t-icon name="folder-import" size="16px" />
+                    <span>{{ $t('knowledgeFolder.moveFolder') }}</span>
+                  </div>
+                  <div class="folder-row-menu-item" @click.stop="handleAction('tag-folder', item)">
+                    <t-icon name="discount" size="16px" />
+                    <span>{{ $t('tagByFolder.menuLabel') }}</span>
+                  </div>
+                  <t-popconfirm
+                    theme="warning"
+                    :content="$t('knowledgeFolder.confirmDeleteFolder', { name: item.file_name || '' })"
+                    :confirm-btn="{ content: $t('common.confirm'), theme: 'danger' }"
+                    :cancel-btn="{ content: $t('common.cancel') }"
+                    placement="left"
+                    @confirm="emit('action', 'delete', item)"
+                  >
+                    <div class="folder-row-menu-item danger">
+                      <t-icon name="delete" size="16px" />
+                      <span>{{ $t('knowledgeFolder.deleteFolder') }}</span>
+                    </div>
+                  </t-popconfirm>
+                </div>
+              </template>
+            </t-popup>
+          </template>
+          <template v-else>
           <t-popup placement="bottom-right" trigger="click" destroy-on-close overlay-class-name="card-more"
             :on-visible-change="(v: boolean) => onMoreVisible(item.id, v)">
             <button class="row-more-btn" :class="{ active: moreOpen === item.id }" type="button"
@@ -319,11 +384,13 @@ const handleAction = (action: 'edit' | 'reparse' | 'cancel-parse' | 'move' | 'de
                   :item="item"
                   :can-mutate-knowledge="canMutateKnowledge"
                   :trace-visible="!!traceVisibleIds[item.id] || (item.parse_status === 'pending' || item.parse_status === 'processing' || item.parse_status === 'finalizing')"
+                  :folder-tree-present="folderTreePresent"
                   @edit="handleAction('edit', item)"
                   @view-trace="handleAction('view-trace', item)"
                   @reparse="handleAction('reparse', item)"
                   @cancel-parse="handleAction('cancel-parse', item)"
                   @move="handleAction('move', item)"
+                  @move-folder="handleAction('move-folder', item)"
                   @batch-manage="handleAction('batch-manage', item)"
                   @delete="handleAction('delete', item)"
                 />
@@ -389,6 +456,7 @@ const handleAction = (action: 'edit' | 'reparse' | 'cancel-parse' | 'move' | 'de
               </div>
             </template>
           </t-popup>
+          </template>
         </div>
       </div>
     </div>
@@ -396,6 +464,18 @@ const handleAction = (action: 'edit' | 'reparse' | 'cancel-parse' | 'move' | 'de
 </template>
 
 <style scoped lang="less">
+.folder-row-icon {
+  color: var(--td-warning-color);
+}
+
+.is-folder {
+  cursor: pointer;
+
+  &:hover {
+    background: var(--td-bg-color-container-hover);
+  }
+}
+
 @keyframes doc-list-fade-in {
   from {
     opacity: 0;
@@ -730,6 +810,78 @@ const handleAction = (action: 'edit' | 'reparse' | 'cancel-parse' | 'move' | 'de
     opacity: 1;
     background: var(--td-component-stroke);
     color: var(--td-text-color-primary);
+  }
+}
+
+.folder-row-menu {
+  display: flex;
+  flex-direction: column;
+  min-width: 140px;
+  gap: 1px;
+}
+
+.folder-row-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  cursor: pointer;
+  color: var(--td-text-color-primary);
+  transition: all 0.15s cubic-bezier(0.2, 0, 0, 1);
+  border-radius: 6px;
+  font-size: 14px;
+  line-height: 20px;
+
+  &:hover {
+    background: var(--td-bg-color-container-hover);
+  }
+
+  &:active {
+    background: var(--td-bg-color-container-active);
+    transform: scale(0.98);
+  }
+
+  .t-icon {
+    font-size: 16px;
+    color: var(--td-text-color-secondary);
+    transition: color 0.15s ease;
+  }
+
+  &:hover .t-icon {
+    color: var(--td-text-color-primary);
+  }
+
+  &.danger {
+    color: var(--td-error-color-6);
+    margin-top: 4px;
+    position: relative;
+
+    &::before {
+      content: '';
+      position: absolute;
+      top: -3px;
+      left: 8px;
+      right: 8px;
+      height: 1px;
+      background: var(--td-component-stroke);
+    }
+
+    .t-icon {
+      color: var(--td-error-color-6);
+    }
+
+    &:hover {
+      background: var(--td-error-color-1);
+      color: var(--td-error-color-6);
+
+      .t-icon {
+        color: var(--td-error-color-6);
+      }
+    }
+
+    &:active {
+      background: var(--td-error-color-2);
+    }
   }
 }
 

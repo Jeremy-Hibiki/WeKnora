@@ -30,16 +30,17 @@ const (
 	fieldKnowledgeID      = "knowledge_id"
 	fieldKnowledgeBaseID  = "knowledge_base_id"
 	fieldTagID            = "tag_id"
+	fieldFolderID         = "folder_id"
 	fieldEmbedding        = "embedding"
 	fieldIsEnabled        = "is_enabled"
 	fieldID               = "id"
 	fieldContentSparse    = "content_sparse"
 )
 
-var (
-	allFields = []string{fieldID, fieldContent, fieldSourceID, fieldSourceType, fieldChunkID,
-		fieldKnowledgeID, fieldKnowledgeBaseID, fieldTagID, fieldIsEnabled, fieldEmbedding}
-)
+var allFields = []string{
+	fieldID, fieldContent, fieldSourceID, fieldSourceType, fieldChunkID,
+	fieldKnowledgeID, fieldKnowledgeBaseID, fieldTagID, fieldFolderID, fieldIsEnabled, fieldEmbedding,
+}
 
 // NewMilvusRetrieveEngineRepository creates and initializes a new Milvus repository.
 // indexCfg is optional — pass nil to use env var / default values (env path).
@@ -151,6 +152,10 @@ func (m *milvusRepository) ensureCollection(ctx context.Context, dimension int) 
 					WithDataType(entity.FieldTypeVarChar).
 					WithMaxLength(255),
 				entity.NewField().
+					WithName(fieldFolderID).
+					WithDataType(entity.FieldTypeVarChar).
+					WithMaxLength(255),
+				entity.NewField().
 					WithName(fieldIsEnabled).
 					WithDataType(entity.FieldTypeBool),
 			},
@@ -169,7 +174,7 @@ func (m *milvusRepository) ensureCollection(ctx context.Context, dimension int) 
 		indexOpts = append(indexOpts, client.NewCreateIndexOption(collectionName, fieldEmbedding, index.NewHNSWIndex(m.metricType, 16, 128)))
 		indexOpts = append(indexOpts, client.NewCreateIndexOption(collectionName, fieldContentSparse, index.NewAutoIndex(entity.BM25)))
 		// Create payload indexes for filtering
-		indexFields := []string{fieldChunkID, fieldKnowledgeID, fieldKnowledgeBaseID, fieldSourceID, fieldIsEnabled}
+		indexFields := []string{fieldChunkID, fieldKnowledgeID, fieldKnowledgeBaseID, fieldSourceID, fieldFolderID, fieldIsEnabled}
 		for _, fieldName := range indexFields {
 			indexOpts = append(indexOpts, client.NewCreateIndexOption(collectionName, fieldName, index.NewAutoIndex(entity.IP)))
 		}
@@ -186,6 +191,13 @@ func (m *milvusRepository) ensureCollection(ctx context.Context, dimension int) 
 		}
 
 		log.Infof("[Milvus] Successfully created collection %s", collectionName)
+	} else {
+		// Collection already exists — check for schema drift and add missing fields.
+		// This handles upgrades where new metadata fields (e.g. folder_id) were added
+		// to the schema definition but the collection was created before they existed.
+		if err := m.ensureCollectionFields(ctx, collectionName); err != nil {
+			log.Warnf("[Milvus] Failed to ensure collection fields for %s: %v", collectionName, err)
+		}
 	}
 
 	loadOpt := client.NewLoadCollectionOption(collectionName)
@@ -204,6 +216,85 @@ func (m *milvusRepository) ensureCollection(ctx context.Context, dimension int) 
 
 	// Mark as initialized
 	m.initializedCollections.Store(dimension, true)
+	return nil
+}
+
+// ensureCollectionFields checks an existing collection for missing metadata
+// fields and adds them via AddCollectionField (Milvus 2.5+). This handles
+// schema drift when new fields are added to the schema definition but the
+// collection was created before they existed.
+//
+// The expected fields and their definitions mirror the CreateCollection
+// schema above. Only fields absent from the live collection are added.
+// Index creation for the new field is also done here so filtering works
+// immediately after the field is added.
+func (m *milvusRepository) ensureCollectionFields(ctx context.Context, collectionName string) error {
+	log := logger.GetLogger(ctx)
+
+	// Describe the existing collection to get its current fields.
+	col, err := m.client.DescribeCollection(ctx, client.NewDescribeCollectionOption(collectionName))
+	if err != nil {
+		return fmt.Errorf("describe collection: %w", err)
+	}
+
+	existingFields := make(map[string]bool, len(col.Schema.Fields))
+	for _, f := range col.Schema.Fields {
+		existingFields[f.Name] = true
+	}
+
+	// Fields that may have been added after initial collection creation.
+	// Each entry is (fieldName, fieldBuilder, needsIndex).
+	type expectedField struct {
+		name  string
+		field *entity.Field
+		index bool
+	}
+
+	expected := []expectedField{
+		{
+			name: fieldFolderID,
+			field: entity.NewField().
+				WithName(fieldFolderID).
+				WithDataType(entity.FieldTypeVarChar).
+				WithMaxLength(255).
+				WithNullable(true),
+			index: true,
+		},
+		{
+			name: fieldTagID,
+			field: entity.NewField().
+				WithName(fieldTagID).
+				WithDataType(entity.FieldTypeVarChar).
+				WithMaxLength(255).
+				WithNullable(true),
+			index: true,
+		},
+	}
+
+	for _, ef := range expected {
+		if existingFields[ef.name] {
+			continue
+		}
+
+		log.Infof("[Milvus] Adding missing field %s to collection %s", ef.name, collectionName)
+
+		if err := m.client.AddCollectionField(ctx, client.NewAddCollectionFieldOption(collectionName, ef.field)); err != nil {
+			log.Warnf("[Milvus] Failed to add field %s to %s: %v", ef.name, collectionName, err)
+			continue
+		}
+
+		if ef.index {
+			loadTask, idxErr := m.client.CreateIndex(ctx, client.NewCreateIndexOption(collectionName, ef.name, index.NewAutoIndex(entity.IP)))
+			if idxErr != nil {
+				log.Warnf("[Milvus] Failed to create index for field %s: %v", ef.name, idxErr)
+			} else if loadTask != nil {
+				_ = loadTask.Await(ctx)
+			}
+		}
+
+		log.Infof("[Milvus] Successfully added field %s to collection %s", ef.name, collectionName)
+	}
+
 	return nil
 }
 
@@ -575,6 +666,74 @@ func (m *milvusRepository) BatchUpdateChunkTagID(ctx context.Context, chunkTagMa
 	return nil
 }
 
+// BatchUpdateFolderID updates the folder ID of chunks in batch
+func (m *milvusRepository) BatchUpdateFolderID(ctx context.Context, knowledgeFolderMap map[string]string) error {
+	log := logger.GetLogger(ctx)
+	if len(knowledgeFolderMap) == 0 {
+		log.Warn("[Milvus] Empty knowledge folder map provided, skipping")
+		return nil
+	}
+
+	log.Infof("[Milvus] Batch updating folder ID, count: %d", len(knowledgeFolderMap))
+
+	// Get all collections
+	collections, err := m.client.ListCollections(ctx, client.NewListCollectionOption())
+	if err != nil {
+		log.Errorf("[Milvus] Failed to list collections: %v", err)
+		return fmt.Errorf("failed to list collections: %w", err)
+	}
+
+	// Group knowledge by folder ID for batch updates
+	folderGroups := make(map[string][]string)
+	for knowledgeID, folderID := range knowledgeFolderMap {
+		folderGroups[folderID] = append(folderGroups[folderID], knowledgeID)
+	}
+
+	// Update in all matching collections
+	for _, collectionName := range collections {
+		// Only process collections that start with our base name
+		if len(collectionName) <= len(m.collectionBaseName) ||
+			collectionName[:len(m.collectionBaseName)] != m.collectionBaseName {
+			continue
+		}
+
+		// Ensure schema fields exist before writing (handles pre-folder_id collections).
+		if err := m.ensureCollectionFields(ctx, collectionName); err != nil {
+			log.Warnf("[Milvus] Failed to ensure fields for %s: %v", collectionName, err)
+		}
+
+		// Update chunks for each folder ID
+		for folderID, knowledgeIDs := range folderGroups {
+			embeddings, _, err := m.searchByFilter(ctx, collectionName, &universalFilterCondition{
+				Field:    fieldKnowledgeID,
+				Operator: operatorIn,
+				Value:    knowledgeIDs,
+			}, nil, nil)
+			if err != nil {
+				log.Warnf("[Milvus] Failed to search chunks in %s: %v", collectionName, err)
+				continue
+			}
+			upsertEmbeddings := make([]*MilvusVectorEmbedding, 0, len(embeddings))
+			for _, embedding := range embeddings {
+				embedding.FolderID = folderID
+				upsertEmbeddings = append(upsertEmbeddings, &embedding.MilvusVectorEmbedding)
+			}
+			if len(upsertEmbeddings) > 0 {
+				req := createUpsert(collectionName, upsertEmbeddings)
+				_, err := m.client.Upsert(ctx, req)
+				if err != nil {
+					log.Warnf("[Milvus] Failed to update chunks in %s: %v", collectionName, err)
+					continue
+				}
+			}
+		}
+
+	}
+
+	log.Infof("[Milvus] Batch update folder ID completed")
+	return nil
+}
+
 func (m *milvusRepository) getBaseFilterForQuery(params types.RetrieveParams) (string, map[string]any, error) {
 	filters := make([]*universalFilterCondition, 0)
 	if len(params.KnowledgeBaseIDs) > 0 {
@@ -589,6 +748,13 @@ func (m *milvusRepository) getBaseFilterForQuery(params types.RetrieveParams) (s
 			Field:    fieldKnowledgeID,
 			Operator: operatorIn,
 			Value:    params.KnowledgeIDs,
+		})
+	}
+	if len(params.FolderIDs) > 0 {
+		filters = append(filters, &universalFilterCondition{
+			Field:    fieldFolderID,
+			Operator: operatorIn,
+			Value:    params.FolderIDs,
 		})
 	}
 	if len(params.TagIDs) > 0 {
@@ -945,6 +1111,7 @@ func toMilvusVectorEmbedding(embedding *types.IndexInfo, additionalParams map[st
 		KnowledgeID:     embedding.KnowledgeID,
 		KnowledgeBaseID: embedding.KnowledgeBaseID,
 		TagID:           embedding.TagID,
+		FolderID:        embedding.FolderID,
 		IsEnabled:       embedding.IsEnabled,
 	}
 	if additionalParams != nil && slices.Contains(slices.Collect(maps.Keys(additionalParams)), fieldEmbedding) {
@@ -984,6 +1151,7 @@ func createUpsert(collectionName string, embeddings []*MilvusVectorEmbedding) cl
 	knowledgeIDs := make([]string, 0, len(embeddings))
 	knowledgeBaseIDs := make([]string, 0, len(embeddings))
 	tagIDs := make([]string, 0, len(embeddings))
+	folderIDs := make([]string, 0, len(embeddings))
 	isEnableds := make([]bool, 0, len(embeddings))
 	var dimension int
 	for _, embedding := range embeddings {
@@ -996,6 +1164,7 @@ func createUpsert(collectionName string, embeddings []*MilvusVectorEmbedding) cl
 		knowledgeIDs = append(knowledgeIDs, embedding.KnowledgeID)
 		knowledgeBaseIDs = append(knowledgeBaseIDs, embedding.KnowledgeBaseID)
 		tagIDs = append(tagIDs, embedding.TagID)
+		folderIDs = append(folderIDs, embedding.FolderID)
 		isEnableds = append(isEnableds, embedding.IsEnabled)
 		dimension = len(embedding.Embedding)
 	}
@@ -1009,6 +1178,7 @@ func createUpsert(collectionName string, embeddings []*MilvusVectorEmbedding) cl
 		WithVarcharColumn(fieldKnowledgeID, knowledgeIDs).
 		WithVarcharColumn(fieldKnowledgeBaseID, knowledgeBaseIDs).
 		WithVarcharColumn(fieldTagID, tagIDs).
+		WithVarcharColumn(fieldFolderID, folderIDs).
 		WithBoolColumn(fieldIsEnabled, isEnableds)
 	return opt
 }
@@ -1107,6 +1277,15 @@ func convertResultSet(resultSet []client.ResultSet) ([]*MilvusVectorEmbeddingWit
 					return nil, nil, err
 				}
 				docs[i].TagID = val
+			}
+		}
+		if field == fieldFolderID {
+			for i := 0; i < columns.Len(); i++ {
+				val, err := columns.GetAsString(i)
+				if err != nil {
+					return nil, nil, err
+				}
+				docs[i].FolderID = val
 			}
 		}
 		if field == fieldIsEnabled {

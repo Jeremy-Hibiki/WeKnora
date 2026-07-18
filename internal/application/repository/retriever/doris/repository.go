@@ -42,15 +42,15 @@ func NewDorisRetrieveEngineRepository(
 	}
 
 	repo := &dorisRepository{
-		db:             db,
-		httpClient:     &http.Client{},
-		feHTTPBase:     strings.TrimRight(feHTTPBase, "/"),
-		username:       username,
-		password:       password,
-		database:       database,
-		tableBaseName:  tableBaseName,
-		bucketsNum:     indexCfg.GetBucketsNum(0),
-		replicationNum: indexCfg.GetReplicationNum(0),
+		db:                  db,
+		httpClient:          &http.Client{},
+		feHTTPBase:          strings.TrimRight(feHTTPBase, "/"),
+		username:            username,
+		password:            password,
+		database:            database,
+		tableBaseName:       tableBaseName,
+		bucketsNum:          indexCfg.GetBucketsNum(0),
+		replicationNum:      indexCfg.GetReplicationNum(0),
 		compatModeRequested: compatMode,
 	}
 	log.Infof("[Doris] Repository initialized: db=%s, base=%s, fe_http=%s, compat_mode=%s",
@@ -152,17 +152,17 @@ func (r *dorisRepository) insertRows(ctx context.Context,
 		return nil
 	}
 
-	// 9 个普通占位符 + 1 个 embedding 字面量。
-	const perRowPlaceholders = "(?, ?, ?, ?, ?, ?, ?, ?, ?, %s)"
+	// 10 个普通占位符 + 1 个 embedding 字面量。
+	const perRowPlaceholders = "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, %s)"
 
 	parts := make([]string, len(rows))
-	args := make([]any, 0, len(rows)*9)
+	args := make([]any, 0, len(rows)*10)
 	for i, e := range rows {
 		parts[i] = fmt.Sprintf(perRowPlaceholders, embeddingLiteral(e.Embedding))
 		args = append(args,
 			e.ID, e.Content, e.SourceID, e.SourceType,
 			e.ChunkID, e.KnowledgeID, e.KnowledgeBaseID, e.TagID,
-			e.IsEnabled,
+			e.FolderID, e.IsEnabled,
 		)
 	}
 
@@ -485,6 +485,7 @@ func (r *dorisRepository) CopyIndices(ctx context.Context,
 				KnowledgeID:     targetKnowledgeID,
 				KnowledgeBaseID: targetKnowledgeBaseID,
 				TagID:           src.TagID,
+				FolderID:        src.FolderID,
 				IsEnabled:       src.IsEnabled,
 				Embedding:       src.Embedding,
 			})
@@ -531,6 +532,7 @@ func toDorisVectorEmbedding(
 		KnowledgeID:     info.KnowledgeID,
 		KnowledgeBaseID: info.KnowledgeBaseID,
 		TagID:           info.TagID,
+		FolderID:        info.FolderID,
 		IsEnabled:       info.IsEnabled,
 	}
 	if additionalParams != nil {
@@ -595,6 +597,7 @@ func scanRetrieveRows(rows *sql.Rows, matchType types.MatchType) ([]*types.Index
 		var (
 			id, content, sourceID, chunkID      string
 			knowledgeID, knowledgeBaseID, tagID string
+			folderID                            string
 			sourceType                          int
 			isEnabled                           bool
 			score                               float64
@@ -602,10 +605,10 @@ func scanRetrieveRows(rows *sql.Rows, matchType types.MatchType) ([]*types.Index
 		)
 		if withScore {
 			err = rows.Scan(&id, &content, &sourceID, &sourceType,
-				&chunkID, &knowledgeID, &knowledgeBaseID, &tagID, &isEnabled, &score)
+				&chunkID, &knowledgeID, &knowledgeBaseID, &tagID, &folderID, &isEnabled, &score)
 		} else {
 			err = rows.Scan(&id, &content, &sourceID, &sourceType,
-				&chunkID, &knowledgeID, &knowledgeBaseID, &tagID, &isEnabled)
+				&chunkID, &knowledgeID, &knowledgeBaseID, &tagID, &folderID, &isEnabled)
 			score = 1.0
 		}
 		if err != nil {
@@ -637,12 +640,13 @@ func scanCopyRows(rows *sql.Rows) ([]*DorisVectorEmbedding, error) {
 		var (
 			id, content, sourceID, chunkID      string
 			knowledgeID, knowledgeBaseID, tagID string
+			folderID                            string
 			sourceType                          int
 			isEnabled                           bool
 			embeddingRaw                        sql.RawBytes
 		)
 		if err := rows.Scan(&id, &content, &sourceID, &sourceType,
-			&chunkID, &knowledgeID, &knowledgeBaseID, &tagID, &isEnabled, &embeddingRaw); err != nil {
+			&chunkID, &knowledgeID, &knowledgeBaseID, &tagID, &folderID, &isEnabled, &embeddingRaw); err != nil {
 			return nil, fmt.Errorf("scan copy row: %w", err)
 		}
 		vec, err := parseEmbeddingLiteral(embeddingRaw)
@@ -658,6 +662,7 @@ func scanCopyRows(rows *sql.Rows) ([]*DorisVectorEmbedding, error) {
 			KnowledgeID:     knowledgeID,
 			KnowledgeBaseID: knowledgeBaseID,
 			TagID:           tagID,
+			FolderID:        folderID,
 			IsEnabled:       isEnabled,
 			Embedding:       vec,
 		})
@@ -686,6 +691,7 @@ func calculateStorageSize(emb *DorisVectorEmbedding) int64 {
 	payload += int64(len(emb.KnowledgeID))
 	payload += int64(len(emb.KnowledgeBaseID))
 	payload += int64(len(emb.TagID))
+	payload += int64(len(emb.FolderID))
 	payload += 8 // source_type int
 
 	var vec int64

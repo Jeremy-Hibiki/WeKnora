@@ -29,19 +29,20 @@ const (
 // name "low" so tasks enqueued by older releases remain consumable during a
 // rolling deployment. New code uses the business-semantic constant.
 const (
-	QueueDefault     = "default"
+	QueueDefault = "default"
 	// QueueChatAttachment carries session-scoped chat attachment parsing. It
 	// lives in the core pool but with a higher weight than QueueDefault so
 	// interactive chat uploads are not starved by knowledge-base batch imports.
 	QueueChatAttachment = "chat_attachment"
 	QueuePostProcess    = "postprocess"
-	QueueSummary     = "summary"
-	QueueMultimodal  = "multimodal"
-	QueueGraph       = "graph"
-	QueueQuestion    = "question"
-	QueueSync        = "sync"
-	QueueMaintenance = "low"
-	QueueWiki        = "wiki"
+	QueueSummary        = "summary"
+	QueueMultimodal     = "multimodal"
+	QueueGraph          = "graph"
+	QueueQuestion       = "question"
+	QueueSync           = "sync"
+	QueueMaintenance    = "low"
+	QueueWiki           = "wiki"
+	QueueParentSummary  = "parent_summary" // Isolated lane for high-volume slow parent-summary tasks
 )
 
 // QueueDefinition is the single source of truth for queue topology. Worker
@@ -79,6 +80,7 @@ var queueDefinitions = []QueueDefinition{
 		TypeFAQImport, TypeKBClone, TypeIndexDelete, TypeKBDelete,
 		TypeKnowledgeListDelete, TypeKnowledgeListReparse, TypeKnowledgeMove,
 	}},
+	{Name: QueueParentSummary, Pool: WorkerPoolEnrichment, Weight: 1, SharedWeight: 1, TaskTypes: []string{TypeParentSummaryGeneration}},
 	{Name: QueueWiki, Pool: WorkerPoolWiki, Weight: 1, TaskTypes: []string{TypeWikiIngest, TypeWikiFinalize}},
 }
 
@@ -245,6 +247,7 @@ const (
 	TypeDataSourceSync           = "datasource:sync"            // 数据源同步任务
 	TypeWikiIngest               = "wiki:ingest"                // Wiki 页面同步任务
 	TypeWikiFinalize             = "wiki:finalize"              // Wiki KB 级收尾任务（防抖：索引重建/死链清理/交叉链接）
+	TypeParentSummaryGeneration  = "parent_summary:generation"  // Parent chunk 摘要生成任务
 	TypeTemporaryDocumentProcess = "temporary_document:process" // 会话临时文档解析任务
 )
 
@@ -313,6 +316,7 @@ type QuestionGenerationPayload struct {
 	TenantID        uint64 `json:"tenant_id"`
 	KnowledgeBaseID string `json:"knowledge_base_id"`
 	KnowledgeID     string `json:"knowledge_id"`
+	FolderID        string `json:"folder_id,omitempty"` // Folder ID for vector-store-level metadata filtering (empty = root)
 	QuestionCount   int    `json:"question_count"`
 	// Language is the request locale (e.g. zh-CN, en-US) when the task was enqueued, used for {{language}} / {{lang}} in templates.
 	Language string `json:"language,omitempty"`
@@ -460,9 +464,10 @@ type ImageMultimodalPayload struct {
 	TenantID        uint64 `json:"tenant_id"`
 	KnowledgeID     string `json:"knowledge_id"`
 	KnowledgeBaseID string `json:"knowledge_base_id"`
-	ChunkID         string `json:"chunk_id"`         // parent text chunk
-	ImageURL        string `json:"image_url"`        // provider:// URL (e.g. local://..., minio://...)
-	ImageLocalPath  string `json:"image_local_path"` // deprecated: kept for backward compat with in-flight tasks
+	FolderID        string `json:"folder_id,omitempty"` // Folder ID for vector-store-level metadata filtering (empty = root)
+	ChunkID         string `json:"chunk_id"`            // parent text chunk
+	ImageURL        string `json:"image_url"`           // provider:// URL (e.g. local://..., minio://...)
+	ImageLocalPath  string `json:"image_local_path"`    // deprecated: kept for backward compat with in-flight tasks
 	EnableOCR       bool   `json:"enable_ocr"`
 	EnableCaption   bool   `json:"enable_caption"`
 	Language        string `json:"language,omitempty"`          // Request locale for {{language}} in prompt templates
@@ -485,6 +490,21 @@ type KnowledgePostProcessPayload struct {
 	KnowledgeBaseID string `json:"knowledge_base_id"`
 	Language        string `json:"language,omitempty"` // Request locale for {{language}} in prompt templates
 	Attempt         int    `json:"attempt,omitempty"`
+}
+
+// ParentSummaryGenerationPayload represents the parent chunk summary generation task payload.
+// On enqueue, parent chunks are grouped into batches of 20, one task per batch, enqueued
+// to QueueParentSummary to avoid cascade-blockage with other fan-out tasks.
+type ParentSummaryGenerationPayload struct {
+	TracingContext
+	TenantID        uint64   `json:"tenant_id"`
+	KnowledgeBaseID string   `json:"knowledge_base_id"`
+	KnowledgeID     string   `json:"knowledge_id"`
+	FolderID        string   `json:"folder_id,omitempty"`   // Folder ID for vector-store-level metadata filtering (empty = root)
+	Language        string   `json:"language,omitempty"`    // Request locale for {{language}} in prompt templates
+	ParentChunkIDs  []string `json:"parent_chunk_ids"`      // Batch of parent chunks to generate summaries for
+	Attempt         int      `json:"attempt,omitempty"`     // Links this task to the parent parse attempt
+	BatchIndex      int      `json:"batch_index,omitempty"` // 0-based ordinal of this batch
 }
 
 // KBCloneTaskStatus represents the status of a knowledge base clone task

@@ -1,0 +1,5 @@
+schema: spec-driven
+created: 2026-07-16
+goal: "Add tag-by-folder bulk action: add/remove document tags recursively
+  across all knowledge entries in a folder subtree, treating the folder as a
+  selector only (no new entities, no inheritance)"

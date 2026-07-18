@@ -28,6 +28,7 @@ type sqliteEmbedding struct {
 	KnowledgeID     string    `gorm:"column:knowledge_id;index"`
 	KnowledgeBaseID string    `gorm:"column:knowledge_base_id;index"`
 	TagID           string    `gorm:"column:tag_id;index"`
+	FolderID        string    `gorm:"column:folder_id;type:varchar(36);default:''"`
 	Content         string    `gorm:"column:content;not null"`
 	Dimension       int       `gorm:"column:dimension;not null"`
 	IsEnabled       *bool     `gorm:"column:is_enabled;default:true;index"`
@@ -261,6 +262,13 @@ func (r *sqliteRepository) BatchUpdateChunkTagID(ctx context.Context, chunkTagMa
 	return nil
 }
 
+func (r *sqliteRepository) BatchUpdateFolderID(ctx context.Context, knowledgeFolderMap map[string]string) error {
+	for knowledgeID, folderID := range knowledgeFolderMap {
+		r.db.WithContext(ctx).Model(&sqliteEmbedding{}).Where("knowledge_id = ?", knowledgeID).Update("folder_id", folderID)
+	}
+	return nil
+}
+
 // --- Retrieve ---
 
 func (r *sqliteRepository) Retrieve(ctx context.Context, params types.RetrieveParams) ([]*types.RetrieveResult, error) {
@@ -477,6 +485,7 @@ func toSQLiteEmbedding(info *types.IndexInfo) *sqliteEmbedding {
 		KnowledgeID:     info.KnowledgeID,
 		KnowledgeBaseID: info.KnowledgeBaseID,
 		TagID:           info.TagID,
+		FolderID:        info.FolderID,
 		Content:         common.CleanInvalidUTF8(info.Content),
 		Dimension:       0,
 		IsEnabled:       &enabled,
@@ -562,6 +571,12 @@ func buildFilterWhere(params types.RetrieveParams) []whereClause {
 		parts = append(parts, whereClause{
 			clause: "e.knowledge_id IN (" + placeholders(len(params.KnowledgeIDs)) + ")",
 			args:   toInterfaceSlice(params.KnowledgeIDs),
+		})
+	}
+	if len(params.FolderIDs) > 0 {
+		parts = append(parts, whereClause{
+			clause: "e.folder_id IN (" + placeholders(len(params.FolderIDs)) + ")",
+			args:   toInterfaceSlice(params.FolderIDs),
 		})
 	}
 	if len(params.TagIDs) > 0 {

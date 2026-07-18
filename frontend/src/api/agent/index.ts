@@ -367,6 +367,7 @@ export function getSuggestedQuestions(
     knowledge_base_ids?: string[];
     knowledge_ids?: string[];
     tag_scopes?: Array<{ knowledge_base_id: string; tag_ids: string[] }>;
+    folder_ids?: string[];
     limit?: number;
   }
 ) {
@@ -374,6 +375,7 @@ export function getSuggestedQuestions(
   if (params?.knowledge_base_ids?.length) query.set('knowledge_base_ids', params.knowledge_base_ids.join(','));
   if (params?.knowledge_ids?.length) query.set('knowledge_ids', params.knowledge_ids.join(','));
   if (params?.tag_scopes?.length) query.set('tag_scopes', JSON.stringify(params.tag_scopes));
+  if (params?.folder_ids?.length) { query.set('folder_ids', params.folder_ids.join(',')); query.set('include_subfolders', 'true'); }
   if (params?.limit) query.set('limit', String(params.limit));
   const qs = query.toString();
   return get<{ data: { questions: SuggestedQuestion[] } }>(`/api/v1/agents/${agentId}/suggested-questions${qs ? '?' + qs : ''}`);

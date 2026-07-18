@@ -4720,6 +4720,518 @@
                 }
             }
         },
+        "/knowledge-bases/{id}/folders": {
+            "get": {
+                "security": [
+                    {
+                        "Bearer": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "List all folders under a specific parent (or root if parent_id not provided)",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Folders"
+                ],
+                "summary": "List folders",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Knowledge Base ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Parent Folder ID (omit for root level)",
+                        "name": "parent_id",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/github_com_Tencent_WeKnora_internal_types.KnowledgeFolder"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Tencent_WeKnora_internal_errors.AppError"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Create a new folder in the specified knowledge base",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Folders"
+                ],
+                "summary": "Create a new folder",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Knowledge Base ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Folder creation request",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Tencent_WeKnora_internal_types.CreateFolderRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Tencent_WeKnora_internal_types.KnowledgeFolder"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Tencent_WeKnora_internal_errors.AppError"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Tencent_WeKnora_internal_errors.AppError"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Tencent_WeKnora_internal_errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
+        "/knowledge-bases/{id}/folders/tree": {
+            "get": {
+                "security": [
+                    {
+                        "Bearer": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Retrieve the complete folder hierarchy for a knowledge base",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Folders"
+                ],
+                "summary": "Get folder tree",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Knowledge Base ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/github_com_Tencent_WeKnora_internal_types.KnowledgeFolder"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Tencent_WeKnora_internal_errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
+        "/knowledge-bases/{id}/folders/{folder_id}": {
+            "get": {
+                "security": [
+                    {
+                        "Bearer": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Retrieve detailed information about a specific folder",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Folders"
+                ],
+                "summary": "Get folder by ID",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Knowledge Base ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Folder ID",
+                        "name": "folder_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Tencent_WeKnora_internal_types.KnowledgeFolder"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Tencent_WeKnora_internal_errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Tencent_WeKnora_internal_errors.AppError"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "Bearer": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Update folder properties (name, color, description, sort order)",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Folders"
+                ],
+                "summary": "Update folder",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Knowledge Base ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Folder ID",
+                        "name": "folder_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Update request",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Tencent_WeKnora_internal_types.UpdateFolderRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Tencent_WeKnora_internal_types.KnowledgeFolder"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Tencent_WeKnora_internal_errors.AppError"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Tencent_WeKnora_internal_errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Tencent_WeKnora_internal_errors.AppError"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Tencent_WeKnora_internal_errors.AppError"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "Bearer": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Delete a folder (soft delete by default, use force=true for cascade delete: subfolders are deleted and knowledge entries are moved to root)",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Folders"
+                ],
+                "summary": "Delete folder",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Knowledge Base ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Folder ID",
+                        "name": "folder_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Force cascade delete (delete subfolders and move knowledge entries to root)",
+                        "name": "force",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Tencent_WeKnora_internal_errors.AppError"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Tencent_WeKnora_internal_errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Tencent_WeKnora_internal_errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
+        "/knowledge-bases/{id}/folders/{folder_id}/breadcrumb": {
+            "get": {
+                "security": [
+                    {
+                        "Bearer": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Get the breadcrumb path from root to the specified folder",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Folders"
+                ],
+                "summary": "Get folder breadcrumb",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Knowledge Base ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Folder ID",
+                        "name": "folder_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/github_com_Tencent_WeKnora_internal_types.KnowledgeFolder"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Tencent_WeKnora_internal_errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Tencent_WeKnora_internal_errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
+        "/knowledge-bases/{id}/folders/{folder_id}/move": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Move a folder to a new parent location",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Folders"
+                ],
+                "summary": "Move folder",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Knowledge Base ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Folder ID",
+                        "name": "folder_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Move request",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Tencent_WeKnora_internal_types.MoveFolderRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Tencent_WeKnora_internal_types.KnowledgeFolder"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Tencent_WeKnora_internal_errors.AppError"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Tencent_WeKnora_internal_errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Tencent_WeKnora_internal_errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
         "/knowledge-bases/{id}/hybrid-search": {
             "get": {
                 "security": [
@@ -5073,6 +5585,84 @@
                 }
             }
         },
+        "/knowledge-bases/{id}/knowledge/folder": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Upload multiple files preserving their relative directory structure; folders are auto-created.",
+                "consumes": [
+                    "multipart/form-data"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Knowledge"
+                ],
+                "summary": "Upload a folder (native browser directory upload)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Knowledge Base ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "file",
+                        "description": "Files (repeated)",
+                        "name": "files",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Relative path for each file (repeated, same order as files)",
+                        "name": "paths",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Parent folder ID (omit for KB root)",
+                        "name": "root_folder_id",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Enable multimodel parsing (applied to all files)",
+                        "name": "enable_multimodel",
+                        "in": "formData"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_handler.folderUploadResult"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Tencent_WeKnora_internal_errors.AppError"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Tencent_WeKnora_internal_errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
         "/knowledge-bases/{id}/knowledge/manual": {
             "post": {
                 "security": [
@@ -5210,6 +5800,77 @@
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/knowledge-bases/{id}/knowledge/zip": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Extract a .zip and create folders/files matching the archive's directory layout.",
+                "consumes": [
+                    "multipart/form-data"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Knowledge"
+                ],
+                "summary": "Upload a zip archive and reconstruct its folder structure",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Knowledge Base ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "file",
+                        "description": "Zip archive",
+                        "name": "file",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Parent folder ID (omit for KB root)",
+                        "name": "root_folder_id",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Enable multimodel parsing (applied to all files)",
+                        "name": "enable_multimodel",
+                        "in": "formData"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_handler.folderUploadResult"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Tencent_WeKnora_internal_errors.AppError"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Tencent_WeKnora_internal_errors.AppError"
                         }
                     }
                 }
@@ -7645,6 +8306,129 @@
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/github_com_Tencent_WeKnora_internal_types.WikiStats"
+                        }
+                    }
+                }
+            }
+        },
+        "/knowledges/batch-move-folder": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Move multiple knowledge entries to a specified folder or to root",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Knowledge"
+                ],
+                "summary": "Batch move knowledge to folder",
+                "parameters": [
+                    {
+                        "description": "Batch move request with knowledge_ids and folder_id",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Tencent_WeKnora_internal_errors.AppError"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Tencent_WeKnora_internal_errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
+        "/knowledges/{id}/folder": {
+            "put": {
+                "security": [
+                    {
+                        "Bearer": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Move a knowledge entry to a specified folder or to root",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Knowledge"
+                ],
+                "summary": "Move knowledge to folder",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Knowledge ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Move request with folder_id (null for root)",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Tencent_WeKnora_internal_errors.AppError"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Tencent_WeKnora_internal_errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Tencent_WeKnora_internal_errors.AppError"
                         }
                     }
                 }
@@ -12046,6 +12830,101 @@
                 }
             }
         },
+        "/system/admin/users": {
+            "get": {
+                "description": "Return a paginated list of every user in the platform,\noptionally filtered by a substring match over username /\nemail (`?search=...`). SystemAdmin only. Page size is capped\nat 200 to keep large tables responsive.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "System Admin"
+                ],
+                "summary": "List all users (platform-wide)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Substring filter on username/email",
+                        "name": "search",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 0,
+                        "description": "Page offset",
+                        "name": "offset",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 50,
+                        "description": "Page size (max 200)",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_handler.ListUsersResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden: not a system admin",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            },
+            "post": {
+                "description": "Provision a brand-new user account on behalf of a system\nadministrator. Bypasses the public registration_mode gate\n(the SystemAdmin role is the authorisation). The new user\ngets a default workspace + Owner membership, identical to\nself-service registration; no login tokens are returned —\nthe user signs in themselves.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "System Admin"
+                ],
+                "summary": "Create a new user (admin)",
+                "parameters": [
+                    {
+                        "description": "New user details",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_handler.AdminCreateUserRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "User created",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Tencent_WeKnora_internal_types.UserInfo"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request / duplicate",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden: not a system admin",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/system/admin/users/reset-password": {
             "post": {
                 "description": "Replace another user's local password and revoke all of their existing sessions (SystemAdmin only).\nA system administrator cannot reset their own password through this endpoint; self-service password change still requires the old password.",
@@ -12080,6 +12959,131 @@
                     },
                     "400": {
                         "description": "Invalid request, weak password, or self reset",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden: not a system admin",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "User not found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/system/admin/users/{id}/reset-password": {
+            "post": {
+                "description": "Set a new password for a user without requiring the old\npassword. The SystemAdmin caller is the authorisation.\nEvery outstanding session token for the user is revoked\nso a stolen token cannot survive the reset. A system admin\ncannot reset their own password here; self-service password\nchange still requires the old password. The new password\nitself is never logged.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "System Admin"
+                ],
+                "summary": "Reset a user's password (admin)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "User ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "New password",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_handler.AdminResetPasswordRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "{ ok: true }",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request / weak password / self reset",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden: not a system admin",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "User not found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/system/admin/users/{id}/status": {
+            "put": {
+                "description": "Flip a user's active status. Disabling revokes every\noutstanding session token for the user so an existing\naccess token stops working immediately. The caller cannot\ndisable themselves (prevents a system admin from locking\nthemselves out). Idempotent: setting the current status\nagain is a no-op success.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "System Admin"
+                ],
+                "summary": "Enable or disable a user",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "User ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "New status",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_handler.UpdateUserStatusRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Updated user",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Tencent_WeKnora_internal_types.UserInfo"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request / self-disable",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -14737,6 +15741,9 @@
                 "system.setting_changed",
                 "system.admin_promoted",
                 "system.admin_revoked",
+                "system.user_created",
+                "system.user_activated",
+                "system.user_deactivated",
                 "system.user_password_reset",
                 "system.queue_task_retried",
                 "system.queue_task_deleted",
@@ -14763,6 +15770,9 @@
                 "AuditActionSystemSettingChanged",
                 "AuditActionSystemAdminPromoted",
                 "AuditActionSystemAdminRevoked",
+                "AuditActionSystemUserCreated",
+                "AuditActionSystemUserActivated",
+                "AuditActionSystemUserDeactivated",
                 "AuditActionSystemUserPasswordReset",
                 "AuditActionSystemQueueTaskRetried",
                 "AuditActionSystemQueueTaskDeleted",
@@ -15022,6 +16032,27 @@
                 "summarize_threshold": {
                     "description": "Summarize threshold: number of messages before summarization",
                     "type": "integer"
+                }
+            }
+        },
+        "github_com_Tencent_WeKnora_internal_types.CreateFolderRequest": {
+            "type": "object",
+            "required": [
+                "name"
+            ],
+            "properties": {
+                "color": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string",
+                    "maxLength": 255
+                },
+                "parent_folder_id": {
+                    "type": "string"
                 }
             }
         },
@@ -16006,6 +17037,10 @@
                     "description": "File type of the knowledge",
                     "type": "string"
                 },
+                "folder_id": {
+                    "description": "Folder ID that this knowledge entry belongs to, nil for root level",
+                    "type": "string"
+                },
                 "id": {
                     "description": "Unique identifier of the knowledge",
                     "type": "string"
@@ -16364,6 +17399,77 @@
                 },
                 "source_tenant_id": {
                     "type": "integer"
+                }
+            }
+        },
+        "github_com_Tencent_WeKnora_internal_types.KnowledgeFolder": {
+            "type": "object",
+            "properties": {
+                "children": {
+                    "description": "Non-persisted fields populated on query",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_Tencent_WeKnora_internal_types.KnowledgeFolder"
+                    }
+                },
+                "color": {
+                    "description": "Optional display color",
+                    "type": "string"
+                },
+                "created_at": {
+                    "description": "Creation time",
+                    "type": "string"
+                },
+                "deleted_at": {
+                    "description": "Soft delete timestamp",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/gorm.DeletedAt"
+                        }
+                    ]
+                },
+                "depth": {
+                    "description": "Depth level (1-based, depth=1 means direct child of root)",
+                    "type": "integer"
+                },
+                "description": {
+                    "description": "Optional description",
+                    "type": "string"
+                },
+                "id": {
+                    "description": "Unique identifier of the folder",
+                    "type": "string"
+                },
+                "knowledge_base_id": {
+                    "description": "ID of the knowledge base this folder belongs to",
+                    "type": "string"
+                },
+                "knowledge_count": {
+                    "type": "integer"
+                },
+                "name": {
+                    "description": "Display name of the folder",
+                    "type": "string"
+                },
+                "parent_folder_id": {
+                    "description": "ID of the parent folder, nil for root-level folders",
+                    "type": "string"
+                },
+                "path": {
+                    "description": "Materialized path (e.g., /parent_id/self_id/) for efficient subtree queries",
+                    "type": "string"
+                },
+                "sort_order": {
+                    "description": "Sort order within the parent folder",
+                    "type": "integer"
+                },
+                "tenant_id": {
+                    "description": "Tenant ID",
+                    "type": "integer"
+                },
+                "updated_at": {
+                    "description": "Last updated time",
+                    "type": "string"
                 }
             }
         },
@@ -16800,6 +17906,9 @@
                     "type": "string"
                 },
                 "content": {
+                    "type": "string"
+                },
+                "folder_id": {
                     "type": "string"
                 },
                 "process_config": {
@@ -17273,6 +18382,14 @@
                 "ModelTypeVLLM",
                 "ModelTypeASR"
             ]
+        },
+        "github_com_Tencent_WeKnora_internal_types.MoveFolderRequest": {
+            "type": "object",
+            "properties": {
+                "target_parent_folder_id": {
+                    "type": "string"
+                }
+            }
         },
         "github_com_Tencent_WeKnora_internal_types.OBSEngineConfig": {
             "type": "object",
@@ -18114,6 +19231,17 @@
                 "disable_vector_match": {
                     "type": "boolean"
                 },
+                "folder_ids": {
+                    "description": "FolderIDs restricts retrieval to knowledge entries in the specified folders.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "include_subfolders": {
+                    "description": "IncludeSubfolders, when true alongside non-empty FolderIDs, includes\nknowledge entries from all descendant subfolders.",
+                    "type": "boolean"
+                },
                 "keyword_threshold": {
                     "type": "number"
                 },
@@ -18192,6 +19320,14 @@
                 "end_at": {
                     "description": "End at",
                     "type": "integer"
+                },
+                "folder_id": {
+                    "description": "FolderID is the folder this knowledge entry belongs to (nil/empty = root)",
+                    "type": "string"
+                },
+                "folder_path": {
+                    "description": "FolderPath is the human-readable path of the folder (e.g. /Guides/Go/API)",
+                    "type": "string"
                 },
                 "id": {
                     "description": "ID",
@@ -18331,6 +19467,12 @@
                 },
                 "agent_id": {
                     "type": "string"
+                },
+                "folder_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 },
                 "knowledge_base_ids": {
                     "type": "array",
@@ -18944,6 +20086,24 @@
                 "success": {
                     "description": "Whether the tool executed successfully",
                     "type": "boolean"
+                }
+            }
+        },
+        "github_com_Tencent_WeKnora_internal_types.UpdateFolderRequest": {
+            "type": "object",
+            "properties": {
+                "color": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string",
+                    "maxLength": 255
+                },
+                "sort_order": {
+                    "type": "integer"
                 }
             }
         },
@@ -19994,6 +21154,39 @@
                 }
             }
         },
+        "internal_handler.AdminCreateUserRequest": {
+            "type": "object",
+            "required": [
+                "email",
+                "password",
+                "username"
+            ],
+            "properties": {
+                "email": {
+                    "type": "string"
+                },
+                "password": {
+                    "type": "string",
+                    "minLength": 6
+                },
+                "username": {
+                    "type": "string",
+                    "maxLength": 50,
+                    "minLength": 2
+                }
+            }
+        },
+        "internal_handler.AdminResetPasswordRequest": {
+            "type": "object",
+            "required": [
+                "new_password"
+            ],
+            "properties": {
+                "new_password": {
+                    "type": "string"
+                }
+            }
+        },
         "internal_handler.BatchDeleteKnowledgeRequest": {
             "type": "object",
             "required": [
@@ -20593,6 +21786,20 @@
                 },
                 "total": {
                     "type": "integer"
+                }
+            }
+        },
+        "internal_handler.ListUsersResponse": {
+            "type": "object",
+            "properties": {
+                "total": {
+                    "type": "integer"
+                },
+                "users": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_Tencent_WeKnora_internal_types.UserInfo"
+                    }
                 }
             }
         },
@@ -21292,6 +22499,14 @@
                 }
             }
         },
+        "internal_handler.UpdateUserStatusRequest": {
+            "type": "object",
+            "properties": {
+                "is_active": {
+                    "type": "boolean"
+                }
+            }
+        },
         "internal_handler.addMemberRequest": {
             "type": "object",
             "required": [
@@ -21440,6 +22655,35 @@
                 }
             }
         },
+        "internal_handler.folderUploadResult": {
+            "type": "object",
+            "properties": {
+                "created_folders": {
+                    "type": "integer"
+                },
+                "errors": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_handler.skipReason"
+                    }
+                },
+                "skipped": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_handler.skipReason"
+                    }
+                },
+                "skipped_files": {
+                    "type": "integer"
+                },
+                "success": {
+                    "type": "boolean"
+                },
+                "uploaded_files": {
+                    "type": "integer"
+                }
+            }
+        },
         "internal_handler.invitationLookupRequest": {
             "type": "object",
             "required": [
@@ -21500,6 +22744,17 @@
                     "items": {
                         "type": "string"
                     }
+                }
+            }
+        },
+        "internal_handler.skipReason": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string"
+                },
+                "reason": {
+                    "type": "string"
                 }
             }
         },
@@ -21619,12 +22874,23 @@
                     "description": "EnableMemory is the per-request override for the memory feature.\nPointer + omitempty so the request can distinguish three states:\n  nil   = client did not specify; backend falls back to the calling\n          user's persisted preference (user.preferences.enable_memory),\n          defaulting to false if that's also unset. This is the path\n          used by the normal logged-in chat UI now that the toggle is\n          stored server-side per user.\n  *true / *false = explicit override. Embedded mode forces *false so a\n          user's personal memory setting doesn't leak into a widget\n          context; older clients that still send a literal bool also\n          land here (back-compat).",
                     "type": "boolean"
                 },
+                "folder_ids": {
+                    "description": "Folder IDs for search scope restriction",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "images": {
                     "description": "Attached images for multimodal chat",
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/internal_handler_session.ImageAttachment"
                     }
+                },
+                "include_subfolders": {
+                    "description": "Include subfolders in folder scope",
+                    "type": "boolean"
                 },
                 "knowledge_base_ids": {
                     "description": "Selected knowledge base ID for this request",

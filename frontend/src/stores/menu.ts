@@ -29,6 +29,11 @@ export const useMenuStore = defineStore('menuStore', () => {
     { title: '', titleKey: 'menu.knowledgeBase', icon: 'zhishiku', path: 'knowledge-bases' },
     { title: '', titleKey: 'menu.agents', icon: 'agent', path: 'agents' },
     { title: '', titleKey: 'menu.organizations', icon: 'organization', path: 'organizations' },
+    // SystemAdmin-only user management entry. Filtered out for
+    // non-admins in visibleMenuArr; the backend RequireSystemAdmin
+    // middleware is the real authority. Placed in the bottom group
+    // (with settings / logout) rather than the top navigation group.
+    { title: '', titleKey: 'menu.adminUsers', icon: 'user', path: 'admin-users' },
     { title: '', titleKey: 'menu.settings', icon: 'setting', path: 'settings' },
     { title: '', titleKey: 'menu.logout', icon: 'logout', path: 'logout' }
   ])
@@ -70,6 +75,12 @@ export const useMenuStore = defineStore('menuStore', () => {
         return false
       }
       if (item.path === 'organizations' && !authStore.hasRole('admin')) {
+        return false
+      }
+      // User management surface is SystemAdmin-only. The server-side
+      // RequireSystemAdmin middleware is the source of truth; this
+      // filter just keeps the sidebar clean for non-admins.
+      if (item.path === 'admin-users' && !authStore.isSystemAdmin) {
         return false
       }
       return true

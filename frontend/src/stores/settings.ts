@@ -17,6 +17,7 @@ interface Settings {
   selectedFiles: string[]; // 当前选中的文件ID列表
   selectedFileKbMap: Record<string, string>; // 文件ID -> 知识库ID，用于刷新后带 kb_id 拉取共享知识库文件
   selectedTags: Array<{ id: string; name: string; kbId: string; kbName?: string }>;
+  selectedFolderIds: Array<{ id: string; name: string; kbId: string; kbName?: string }>;
   selectedMCPServices: string[];
   selectedSkills: string[];
   selectedTools?: string[];
@@ -87,6 +88,7 @@ const defaultSettings: Settings = {
   selectedFiles: [], // 默认为空数组
   selectedFileKbMap: {},  // 文件ID -> 知识库ID
   selectedTags: [],
+  selectedFolderIds: [],
   selectedMCPServices: [],
   selectedSkills: [],
   modelConfig: {
@@ -136,7 +138,7 @@ export const useSettingsStore = defineStore("settings", {
         state.settings.selectedAgentId,
         state.settings.isAgentEnabled || false,
       ),
-    
+
     // Agent 是否就绪（配置完整）
     // 需要满足：1) 配置了允许的工具 2) 设置了对话模型 3) 设置了重排模型
     isAgentReady: (state) => {
@@ -148,7 +150,7 @@ export const useSettingsStore = defineStore("settings", {
         models.rerankModelId && models.rerankModelId.trim() !== ''
       )
     },
-    
+
     // 普通模式（快速回答）是否就绪
     // 需要满足：1) 设置了对话模型 2) 设置了重排模型
     isNormalModeReady: (state) => {
@@ -158,18 +160,18 @@ export const useSettingsStore = defineStore("settings", {
         models.rerankModelId && models.rerankModelId.trim() !== ''
       )
     },
-    
+
     // 获取 Agent 配置
     agentConfig: (state) => state.settings.agentConfig || defaultSettings.agentConfig,
 
     conversationModels: (state) => state.settings.conversationModels || defaultSettings.conversationModels,
-    
+
     // 获取模型配置
     modelConfig: (state) => state.settings.modelConfig || defaultSettings.modelConfig,
-    
+
     // 网络搜索是否启用
     isWebSearchEnabled: (state) => state.settings.webSearchEnabled || false,
-    
+
     // 记忆功能是否启用
     isMemoryEnabled: (state) => state.settings.enableMemory || false,
 
@@ -209,13 +211,13 @@ export const useSettingsStore = defineStore("settings", {
     getKnowledgeBaseId(): string {
       return this.settings.knowledgeBaseId;
     },
-    
+
     // 启用/禁用 Agent
     toggleAgent(enabled: boolean) {
       this.settings.isAgentEnabled = enabled;
       localStorage.setItem("WeKnora_settings", JSON.stringify(this.settings));
     },
-    
+
     // 更新 Agent 配置
     updateAgentConfig(config: Partial<AgentConfig>) {
       this.settings.agentConfig = { ...this.settings.agentConfig, ...config };
@@ -227,13 +229,13 @@ export const useSettingsStore = defineStore("settings", {
       this.settings.conversationModels = { ...current, ...models };
       localStorage.setItem("WeKnora_settings", JSON.stringify(this.settings));
     },
-    
+
     // 更新模型配置
     updateModelConfig(config: Partial<ModelConfig>) {
       this.settings.modelConfig = { ...this.settings.modelConfig, ...config };
       localStorage.setItem("WeKnora_settings", JSON.stringify(this.settings));
     },
-    
+
     // 添加模型
     addModel(type: 'chat' | 'embedding' | 'rerank' | 'vllm', model: ModelItem) {
       const key = `${type}Models` as keyof ModelConfig;
@@ -250,7 +252,7 @@ export const useSettingsStore = defineStore("settings", {
       this.settings.modelConfig[key] = models as any;
       localStorage.setItem("WeKnora_settings", JSON.stringify(this.settings));
     },
-    
+
     // 更新模型
     updateModel(type: 'chat' | 'embedding' | 'rerank' | 'vllm', modelId: string, updates: Partial<ModelItem>) {
       const key = `${type}Models` as keyof ModelConfig;
@@ -266,7 +268,7 @@ export const useSettingsStore = defineStore("settings", {
         localStorage.setItem("WeKnora_settings", JSON.stringify(this.settings));
       }
     },
-    
+
     // 删除模型
     deleteModel(type: 'chat' | 'embedding' | 'rerank' | 'vllm', modelId: string) {
       const key = `${type}Models` as keyof ModelConfig;
@@ -280,7 +282,7 @@ export const useSettingsStore = defineStore("settings", {
       this.settings.modelConfig[key] = models as any;
       localStorage.setItem("WeKnora_settings", JSON.stringify(this.settings));
     },
-    
+
     // 设置默认模型
     setDefaultModel(type: 'chat' | 'embedding' | 'rerank' | 'vllm', modelId: string) {
       const key = `${type}Models` as keyof ModelConfig;
@@ -289,19 +291,19 @@ export const useSettingsStore = defineStore("settings", {
       this.settings.modelConfig[key] = models as any;
       localStorage.setItem("WeKnora_settings", JSON.stringify(this.settings));
     },
-    
+
     // 更新 Ollama 配置
     updateOllamaConfig(config: Partial<OllamaConfig>) {
       this.settings.ollamaConfig = { ...this.settings.ollamaConfig, ...config };
       localStorage.setItem("WeKnora_settings", JSON.stringify(this.settings));
     },
-    
+
     // 选择知识库（替换整个列表）
     selectKnowledgeBases(kbIds: string[]) {
       this.settings.selectedKnowledgeBases = kbIds;
       localStorage.setItem("WeKnora_settings", JSON.stringify(this.settings));
     },
-    
+
     // 添加单个知识库
     addKnowledgeBase(kbId: string) {
       if (!this.settings.selectedKnowledgeBases.includes(kbId)) {
@@ -309,25 +311,25 @@ export const useSettingsStore = defineStore("settings", {
         localStorage.setItem("WeKnora_settings", JSON.stringify(this.settings));
       }
     },
-    
+
     // 移除单个知识库
     removeKnowledgeBase(kbId: string) {
-      this.settings.selectedKnowledgeBases = 
+      this.settings.selectedKnowledgeBases =
         this.settings.selectedKnowledgeBases.filter((id: string) => id !== kbId);
       localStorage.setItem("WeKnora_settings", JSON.stringify(this.settings));
     },
-    
+
     // 清空知识库选择
     clearKnowledgeBases() {
       this.settings.selectedKnowledgeBases = [];
       localStorage.setItem("WeKnora_settings", JSON.stringify(this.settings));
     },
-    
+
     // 获取选中的知识库列表
     getSelectedKnowledgeBases(): string[] {
       return this.settings.selectedKnowledgeBases || [];
     },
-    
+
     // 启用/禁用网络搜索
     toggleWebSearch(enabled: boolean) {
       this.settings.webSearchEnabled = enabled;
@@ -422,6 +424,27 @@ export const useSettingsStore = defineStore("settings", {
       localStorage.setItem("WeKnora_settings", JSON.stringify(this.settings));
     },
 
+    addFolder(folder: { id: string; name: string; kbId: string; kbName?: string }) {
+      if (!this.settings.selectedFolderIds) this.settings.selectedFolderIds = [];
+      if (!this.settings.selectedFolderIds.some(f => f.id === folder.id && f.kbId === folder.kbId)) {
+        this.settings.selectedFolderIds.push(folder);
+        localStorage.setItem("WeKnora_settings", JSON.stringify(this.settings));
+      }
+    },
+
+    removeFolder(folderId: string, kbId?: string) {
+      if (!this.settings.selectedFolderIds) return;
+      this.settings.selectedFolderIds = this.settings.selectedFolderIds.filter(
+        f => !(f.id === folderId && (!kbId || f.kbId === kbId))
+      );
+      localStorage.setItem("WeKnora_settings", JSON.stringify(this.settings));
+    },
+
+    clearFolders() {
+      this.settings.selectedFolderIds = [];
+      localStorage.setItem("WeKnora_settings", JSON.stringify(this.settings));
+    },
+
     addMCPService(serviceId: string) {
       if (!this.settings.selectedMCPServices) this.settings.selectedMCPServices = [];
       if (!this.settings.selectedMCPServices.includes(serviceId)) {
@@ -460,7 +483,7 @@ export const useSettingsStore = defineStore("settings", {
       if (this.settings.selectedFileKbMap) delete this.settings.selectedFileKbMap[fileId];
       localStorage.setItem("WeKnora_settings", JSON.stringify(this.settings));
     },
-    
+
     getSelectedFiles(): string[] {
       return this.settings.selectedFiles || [];
     },
@@ -478,6 +501,8 @@ export const useSettingsStore = defineStore("settings", {
         knowledge_base_id,
         tag_ids: [...new Set(ids)],
       }));
+      const folders = this.settings.selectedFolderIds || [];
+      const folderIds = [...new Set(folders.map((f) => f.id).filter(Boolean))];
       return {
         // A tag's parent KB is only an ownership hint, not an explicit whole-KB
         // selection. Keep it in tag_scopes so the backend cannot widen a tag to
@@ -485,10 +510,11 @@ export const useSettingsStore = defineStore("settings", {
         knowledge_base_ids: selectedKBs.length > 0 ? selectedKBs : undefined,
         knowledge_ids: selectedFiles.length > 0 ? selectedFiles : undefined,
         tag_scopes: tagScopes.length > 0 ? tagScopes : undefined,
+        folder_ids: folderIds.length > 0 ? folderIds : undefined,
         limit,
       };
     },
-    
+
     // 选择智能体（sourceTenantId 仅在使用共享智能体时传入）
     selectAgent(agentId: string, sourceTenantId?: string | null) {
       this.settings.selectedAgentId = agentId;
@@ -503,7 +529,7 @@ export const useSettingsStore = defineStore("settings", {
         this.settings.isAgentEnabled = true;
       }
       // 自定义智能体需要根据其配置来决定
-      
+
       // 切换智能体时重置知识库和文件选择状态
       // 因为不同智能体关联的知识库不同，需要清空用户之前的选择
       this.settings.selectedKnowledgeBases = [];
@@ -514,7 +540,7 @@ export const useSettingsStore = defineStore("settings", {
       this.settings.selectedSkills = [];
       localStorage.setItem("WeKnora_settings", JSON.stringify(this.settings));
     },
-    
+
     // 获取选中的智能体ID
     getSelectedAgentId(): string {
       return this.settings.selectedAgentId || BUILTIN_QUICK_ANSWER_ID;
@@ -604,6 +630,16 @@ export const useSettingsStore = defineStore("settings", {
             .filter(item => item.type === "skill" && item.id)
             .map(item => item.skill_name || item.id);
         }
+        if (Array.isArray(state.folder_ids)) {
+          // Restore folder selection from session state.
+          // Only id is known; name/kbId/kbName will be missing but the store
+          // just needs the ids for filtering — the UI can lazy-resolve names.
+          this.settings.selectedFolderIds = state.folder_ids.map(id => ({
+            id,
+            name: id,
+            kbId: "",
+          }));
+        }
         if (typeof state.web_search_enabled === "boolean") {
           this.settings.webSearchEnabled = state.web_search_enabled;
         }
@@ -632,6 +668,7 @@ export interface SessionLastRequestStatePayload {
   knowledge_base_ids?: string[];
   knowledge_ids?: string[];
   tag_ids?: string[];
+  folder_ids?: string[];
   mcp_service_ids?: string[];
   skill_names?: string[];
   mentioned_items?: Array<{

@@ -37,6 +37,8 @@ type qaRequestContext struct {
 	knowledgeIDs          []string
 	tagScopes             []types.TagScope
 	tagIDs                []string
+	folderIDs             []string
+	includeSubfolders     bool
 	mcpServiceIDs         []string
 	skillNames            []string
 	summaryModelID        string
@@ -70,6 +72,8 @@ func (rc *qaRequestContext) buildQARequest() *types.QARequest {
 		CustomAgent:        rc.customAgent,
 		KnowledgeBaseIDs:   rc.knowledgeBaseIDs,
 		KnowledgeIDs:       rc.knowledgeIDs,
+		FolderIDs:          rc.folderIDs,
+		IncludeSubfolders:  rc.includeSubfolders,
 		TagScopes:          rc.tagScopes,
 		MCPServiceIDs:      rc.mcpServiceIDs,
 		SkillNames:         rc.skillNames,
@@ -199,7 +203,8 @@ func (h *Handler) parseQARequest(c *gin.Context, logPrefix string) (*qaRequestCo
 		for i, upload := range request.AttachmentUploads {
 			if upload.FileSize > maxSize {
 				return nil, nil, errors.NewBadRequestError(
-					fmt.Sprintf("attachment %d exceeds size limit of %dMB", i+1, maxSizeMB))
+					fmt.Sprintf("attachment %d exceeds size limit of %dMB", i+1, maxSizeMB),
+				)
 			}
 		}
 
@@ -345,6 +350,8 @@ func (h *Handler) parseQARequest(c *gin.Context, logPrefix string) (*qaRequestCo
 		knowledgeIDs:          secutils.SanitizeForLogArray(knowledgeIDs),
 		tagScopes:             tagScopes,
 		tagIDs:                secutils.SanitizeForLogArray(tagIDs),
+		folderIDs:             secutils.SanitizeForLogArray(request.FolderIDs),
+		includeSubfolders:     request.IncludeSubfolders,
 		mcpServiceIDs:         secutils.SanitizeForLogArray(mcpServiceIDs),
 		skillNames:            secutils.SanitizeForLogArray(skillNames),
 		summaryModelID:        secutils.SanitizeForLog(request.SummaryModelID),
@@ -794,7 +801,8 @@ func (h *Handler) AgentQA(c *gin.Context) {
 			"Agent mode requested without a resolvable agent_id, rejecting; session=%s, request.AgentID=%q",
 			reqCtx.sessionID, secutils.SanitizeForLog(request.AgentID))
 		c.Error(errors.NewBadRequestError(
-			"agent_id is required when agent mode is enabled"))
+			"agent_id is required when agent mode is enabled",
+		))
 		return
 	}
 
@@ -1329,6 +1337,7 @@ func (h *Handler) persistLastRequestState(parentCtx context.Context, reqCtx *qaR
 		KnowledgeBaseIDs: reqCtx.knowledgeBaseIDs,
 		KnowledgeIDs:     reqCtx.knowledgeIDs,
 		TagIDs:           reqCtx.tagIDs,
+		FolderIDs:        reqCtx.folderIDs,
 		MCPServiceIDs:    reqCtx.mcpServiceIDs,
 		SkillNames:       reqCtx.skillNames,
 		MentionedItems:   reqCtx.mentionedItems,

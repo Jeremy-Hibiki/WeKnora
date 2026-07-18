@@ -819,7 +819,8 @@ func (s *knowledgeService) UpdateKnowledgeTagBatch(ctx context.Context, authoriz
 		for _, k := range knowledgeList {
 			if k.KnowledgeBaseID != authorizedKBID {
 				return werrors.NewForbiddenError(
-					fmt.Sprintf("knowledge %s does not belong to authorized knowledge base", k.ID))
+					fmt.Sprintf("knowledge %s does not belong to authorized knowledge base", k.ID),
+				)
 			}
 		}
 	}
@@ -932,4 +933,202 @@ func (s *knowledgeService) SearchKnowledgeForScopes(ctx context.Context, scopes 
 		return nil, false, 0, nil
 	}
 	return s.repo.SearchKnowledgeInScopes(ctx, scopes, keyword, offset, limit, fileTypes)
+}
+
+// MoveToFolder moves a single knowledge entry to a specified folder or to root.
+func (s *knowledgeService) MoveToFolder(ctx context.Context, knowledgeID string, folderID *string) error {
+	tenantID := types.MustTenantIDFromContext(ctx)
+	knowledge, err := s.repo.GetKnowledgeByID(ctx, tenantID, knowledgeID)
+	if err != nil {
+		return err
+	}
+	if err := s.repo.UpdateKnowledgeFolderID(ctx, knowledgeID, folderID); err != nil {
+		return err
+	}
+	s.updateVectorFolderMetadata(ctx, knowledge.KnowledgeBaseID, tenantID, map[string]string{
+		knowledgeID: types.FolderIDPtrToString(folderID),
+	})
+	return nil
+}
+
+// BatchMoveToFolder moves multiple knowledge entries to a specified folder or to root.
+func (s *knowledgeService) BatchMoveToFolder(ctx context.Context, kbID string, knowledgeIDs []string, folderID *string) error {
+	if len(knowledgeIDs) == 0 {
+		return nil
+	}
+	tenantID := types.MustTenantIDFromContext(ctx)
+	if err := s.repo.BatchUpdateKnowledgeFolderID(ctx, tenantID, kbID, knowledgeIDs, folderID); err != nil {
+		return err
+	}
+	folderIDStr := types.FolderIDPtrToString(folderID)
+	knowledgeFolderMap := make(map[string]string, len(knowledgeIDs))
+	for _, kid := range knowledgeIDs {
+		knowledgeFolderMap[kid] = folderIDStr
+	}
+	s.updateVectorFolderMetadata(ctx, kbID, tenantID, knowledgeFolderMap)
+	return nil
+}
+
+// updateVectorFolderMetadata updates folder_id metadata in the vector store
+// for the given knowledge entries. Errors are logged and swallowed — the SQL
+// update has already succeeded, and the SQL fallback path ensures search
+// correctness until a reconciliation job fixes the metadata.
+func (s *knowledgeService) updateVectorFolderMetadata(ctx context.Context, kbID string, tenantID uint64, knowledgeFolderMap map[string]string) {
+	if len(knowledgeFolderMap) == 0 {
+		return
+	}
+	kb, err := s.kbService.GetKnowledgeBaseByIDOnly(ctx, kbID)
+	if err != nil || kb == nil {
+		logger.Warnf(ctx, "updateVectorFolderMetadata: failed to get KB %s: %v", kbID, err)
+		return
+	}
+	engine, err := retriever.CreateRetrieveEngineForKB(ctx, s.retrieveEngine, s.ownership, tenantID, kb.VectorStoreID)
+	if err != nil {
+		logger.Warnf(ctx, "updateVectorFolderMetadata: failed to create retrieve engine for KB %s: %v", kbID, err)
+		return
+	}
+	if err := engine.BatchUpdateFolderID(ctx, knowledgeFolderMap); err != nil {
+		logger.Warnf(ctx, "updateVectorFolderMetadata: failed to update folder metadata for KB %s: %v", kbID, err)
+	}
+}
+
+// CountKnowledgeByIDs returns the number of knowledge entries in the given KB and tenant that match the IDs.
+func (s *knowledgeService) CountKnowledgeByIDs(ctx context.Context, tenantID uint64, kbID string, knowledgeIDs []string) (int64, error) {
+	return s.repo.CountKnowledgeByIDs(ctx, tenantID, kbID, knowledgeIDs)
+}
+
+// ListKnowledgeIDsByFolderIDs returns knowledge IDs belonging to the specified folders.
+func (s *knowledgeService) ListKnowledgeIDsByFolderIDs(ctx context.Context, tenantID uint64, kbID string, folderIDs []string, recursive bool) ([]string, error) {
+	return s.repo.ListKnowledgeIDsByFolderIDs(ctx, tenantID, kbID, folderIDs, recursive)
+}
+
+func (s *knowledgeService) ListFolderIDsWithDescendants(ctx context.Context, tenantID uint64, kbID string, folderIDs []string) ([]string, error) {
+	return s.repo.ListFolderIDsWithDescendants(ctx, tenantID, kbID, folderIDs)
+}
+
+func (s *knowledgeService) ResolveFolderNames(ctx context.Context, tenantID uint64, kbID string, names []string) ([]string, error) {
+	return s.repo.ResolveFolderNames(ctx, tenantID, kbID, names)
+}
+
+func (s *knowledgeService) ResolveTagNames(ctx context.Context, tenantID uint64, kbID string, names []string) ([]string, error) {
+	if len(names) == 0 {
+		return nil, nil
+	}
+	var ids []string
+	for _, name := range names {
+		tag, err := s.tagRepo.GetByName(ctx, tenantID, kbID, name)
+		if err != nil {
+			continue
+		}
+		ids = append(ids, tag.ID)
+	}
+	return ids, nil
+}
+
+func (s *knowledgeService) ListFoldersByKB(ctx context.Context, tenantID uint64, kbID string) ([]types.FolderSummary, error) {
+	folders, err := s.repo.ListFoldersByKB(ctx, tenantID, kbID)
+	if err != nil {
+		return nil, err
+	}
+	counts, err := s.repo.CountKnowledgeByFolder(ctx, tenantID, kbID)
+	if err != nil {
+		return nil, err
+	}
+	childCounts := make(map[string]int64)
+	for _, f := range folders {
+		if f.ParentFolderID != nil {
+			childCounts[*f.ParentFolderID]++
+		}
+	}
+	result := make([]types.FolderSummary, 0, len(folders))
+	for _, f := range folders {
+		result = append(result, types.FolderSummary{
+			Name:          f.Name,
+			Path:          f.Path,
+			DocumentCount: counts[f.ID],
+			ChildrenCount: childCounts[f.ID],
+		})
+	}
+	return result, nil
+}
+
+func (s *knowledgeService) ListTagsByKB(ctx context.Context, tenantID uint64, kbID string) ([]types.TagSummary, error) {
+	tags, _, err := s.tagRepo.ListByKB(ctx, tenantID, kbID, nil, "")
+	if err != nil {
+		return nil, err
+	}
+	result := make([]types.TagSummary, 0, len(tags))
+	for _, tag := range tags {
+		knowledgeCount, _, _ := s.tagRepo.CountReferences(ctx, tenantID, kbID, tag.ID)
+		result = append(result, types.TagSummary{
+			Name:          tag.Name,
+			DocumentCount: knowledgeCount,
+		})
+	}
+	return result, nil
+}
+
+// TagByFolder adds or removes document tags from all knowledge entries in a folder subtree.
+// The folder is used purely as a selector — tags are written to knowledge_tag_relations.
+// Only document KBs are supported; FAQ KBs are rejected because FAQ tags use a different
+// system (chunks.tag_id) that would make knowledge_tag_relations entries invisible at retrieval.
+// Returns the number of knowledge entries in the scope (not the mutation row count).
+func (s *knowledgeService) TagByFolder(
+	ctx context.Context,
+	kbID string,
+	folderIDs []string,
+	tagIDs []string,
+	action string,
+	recursive bool,
+) (int64, error) {
+	tenantID := types.MustTenantIDFromContext(ctx)
+
+	// Guard 1: KB type must be document. FAQ tags live on chunks.tag_id;
+	// writing knowledge_tag_relations on FAQ entries is silently invisible.
+	kb, err := s.kbService.GetKnowledgeBaseByID(ctx, kbID)
+	if err != nil {
+		return 0, err
+	}
+	if kb.Type != types.KnowledgeBaseTypeDocument {
+		return 0, werrors.NewBadRequestError("tag-by-folder is only supported for document knowledge bases")
+	}
+
+	// Guard 2: all tag IDs must belong to this KB.
+	if err := s.validateKnowledgeTagIDs(ctx, tenantID, kbID, tagIDs); err != nil {
+		return 0, err
+	}
+
+	// Expand folder IDs to knowledge IDs (recursive via materialized path).
+	knowledgeIDs, err := s.repo.ListKnowledgeIDsByFolderIDs(ctx, tenantID, kbID, folderIDs, recursive)
+	if err != nil {
+		return 0, err
+	}
+	if len(knowledgeIDs) == 0 {
+		return 0, nil
+	}
+
+	// Execute the bulk operation.
+	switch action {
+	case "add":
+		if err := s.repo.AddTagToKnowledgeBatch(ctx, knowledgeIDs, tagIDs); err != nil {
+			return 0, err
+		}
+	case "remove":
+		if err := s.repo.RemoveTagFromKnowledgeBatch(ctx, knowledgeIDs, tagIDs); err != nil {
+			return 0, err
+		}
+	default:
+		return 0, werrors.NewBadRequestError(fmt.Sprintf("invalid action %q: must be \"add\" or \"remove\"", action))
+	}
+
+	logger.Infof(ctx, "TagByFolder: kb=%s action=%s tags=%d folders=%d recursive=%v affected(scope)=%d",
+		kbID, action, len(tagIDs), len(folderIDs), recursive, len(knowledgeIDs))
+	return int64(len(knowledgeIDs)), nil
+}
+
+// CountKnowledgeByFolderIDs returns the number of knowledge entries in a folder scope.
+// Uses the same folder expansion logic as ListKnowledgeIDsByFolderIDs via resolveFolderScope,
+// guaranteeing the preview count matches the TagByFolder affected scope.
+func (s *knowledgeService) CountKnowledgeByFolderIDs(ctx context.Context, tenantID uint64, kbID string, folderIDs []string, recursive bool) (int64, error) {
+	return s.repo.CountKnowledgeByFolderIDs(ctx, tenantID, kbID, folderIDs, recursive)
 }

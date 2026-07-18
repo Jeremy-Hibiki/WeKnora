@@ -24,6 +24,7 @@ import (
 type retrieveFilters struct {
 	KBIDs               []string
 	KnowledgeIDs        []string
+	FolderIDs           []string
 	TagIDs              []string
 	ExcludeChunkIDs     []string
 	ExcludeKnowledgeIDs []string
@@ -38,6 +39,7 @@ func fromParams(p types.RetrieveParams) *retrieveFilters {
 	return &retrieveFilters{
 		KBIDs:               p.KnowledgeBaseIDs,
 		KnowledgeIDs:        p.KnowledgeIDs,
+		FolderIDs:           p.FolderIDs,
 		TagIDs:              p.TagIDs,
 		ExcludeChunkIDs:     p.ExcludeChunkIDs,
 		ExcludeKnowledgeIDs: p.ExcludeKnowledgeIDs,
@@ -61,6 +63,11 @@ func (f *retrieveFilters) toBoolMust() []map[string]any {
 	if len(f.KnowledgeIDs) > 0 {
 		must = append(must, map[string]any{
 			"terms": map[string]any{"knowledge_id": f.KnowledgeIDs},
+		})
+	}
+	if len(f.FolderIDs) > 0 {
+		must = append(must, map[string]any{
+			"terms": map[string]any{"folder_id": f.FolderIDs},
 		})
 	}
 	if len(f.TagIDs) > 0 {

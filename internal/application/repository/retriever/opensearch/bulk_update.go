@@ -35,7 +35,7 @@ func (r *Repository) BatchUpdateChunkEnabledStatus(ctx context.Context, chunkSta
 			continue
 		}
 		sort.Strings(ids)
-		if err := r.updateByQueryScript(ctx, ids,
+		if err := r.updateByQueryScript(ctx, "chunk_id", ids,
 			"ctx._source.is_enabled = params.v", map[string]any{"v": v}); err != nil {
 			return err
 		}
@@ -60,7 +60,7 @@ func (r *Repository) BatchUpdateChunkTagID(ctx context.Context, chunkTagMap map[
 	for _, tag := range tags {
 		ids := groups[tag]
 		sort.Strings(ids)
-		if err := r.updateByQueryScript(ctx, ids,
+		if err := r.updateByQueryScript(ctx, "chunk_id", ids,
 			"ctx._source.tag_id = params.v", map[string]any{"v": tag}); err != nil {
 			return err
 		}
@@ -68,16 +68,44 @@ func (r *Repository) BatchUpdateChunkTagID(ctx context.Context, chunkTagMap map[
 	return nil
 }
 
+// BatchUpdateFolderID sets folder_id for all chunks belonging to the
+// given knowledge entries, grouped by folder. The map key is
+// knowledge_id; the terms filter runs against knowledge_id so all
+// chunks of each knowledge entry are updated in one shot.
+func (r *Repository) BatchUpdateFolderID(ctx context.Context, knowledgeFolderMap map[string]string) error {
+	if len(knowledgeFolderMap) == 0 {
+		return nil
+	}
+	groups := map[string][]string{}
+	for knowledgeID, folderID := range knowledgeFolderMap {
+		groups[folderID] = append(groups[folderID], knowledgeID)
+	}
+	folders := make([]string, 0, len(groups))
+	for folder := range groups {
+		folders = append(folders, folder)
+	}
+	sort.Strings(folders)
+	for _, folder := range folders {
+		ids := groups[folder]
+		sort.Strings(ids)
+		if err := r.updateByQueryScript(ctx, "knowledge_id", ids,
+			"ctx._source.folder_id = params.v", map[string]any{"v": folder}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // updateByQueryScript runs an _update_by_query over the cross-dim <base>_*
-// pattern, matching the given chunk ids via a terms filter and applying a
-// constant Painless source with caller values flowing only through bound
-// params (Painless-injection-safe).
+// pattern, matching the given ids via a terms filter on filterField and
+// applying a constant Painless source with caller values flowing only
+// through bound params (Painless-injection-safe).
 func (r *Repository) updateByQueryScript(
-	ctx context.Context, chunkIDs []string, source string, params map[string]any,
+	ctx context.Context, filterField string, ids []string, source string, params map[string]any,
 ) error {
 	body, err := json.Marshal(map[string]any{
 		"query": map[string]any{
-			"terms": map[string]any{"chunk_id": chunkIDs},
+			"terms": map[string]any{filterField: ids},
 		},
 		"script": map[string]any{
 			"lang":   "painless",

@@ -260,6 +260,51 @@ func (r *dorisRepository) BatchUpdateChunkTagID(ctx context.Context,
 	}, "rewrite tag_id")
 }
 
+// BatchUpdateFolderID 批量更新 chunk 的 folder_id 字段。按 knowledge_id 分组定位行，
+// 逻辑与 BatchUpdateChunkTagID 一致：legacy 走 Stream Load partial update，
+// inner_product_duplicate 走读整行后 replaceRows 写回。
+func (r *dorisRepository) BatchUpdateFolderID(ctx context.Context,
+	knowledgeFolderMap map[string]string,
+) error {
+	if len(knowledgeFolderMap) == 0 {
+		return nil
+	}
+
+	// Ensure folder_id column exists on all embedding tables before writing.
+	// Handles tables created before folder_id was added to the DDL.
+	tables, err := r.listEmbeddingTables(ctx)
+	if err != nil {
+		return fmt.Errorf("list embedding tables: %w", err)
+	}
+	for _, table := range tables {
+		if err := r.ensureTableColumns(ctx, table); err != nil {
+			logger.GetLogger(ctx).Warnf("[Doris] Failed to ensure columns for %s: %v", table, err)
+		}
+	}
+
+	compatMode, err := r.resolveCompatMode(ctx)
+	if err != nil {
+		return err
+	}
+	if !compatMode.usesRewriteChunkUpdates() {
+		return r.batchUpdateFolderIDLegacy(ctx, knowledgeFolderMap)
+	}
+
+	knowledgeIDs := make([]string, 0, len(knowledgeFolderMap))
+	for id := range knowledgeFolderMap {
+		knowledgeIDs = append(knowledgeIDs, id)
+	}
+
+	return r.rewriteKnowledgeRows(ctx, knowledgeIDs, func(row *DorisVectorEmbedding) bool {
+		folderID, ok := knowledgeFolderMap[row.KnowledgeID]
+		if !ok || row.FolderID == folderID {
+			return false
+		}
+		row.FolderID = folderID
+		return true
+	}, "rewrite folder_id")
+}
+
 func (r *dorisRepository) rewriteChunkRows(ctx context.Context,
 	chunkIDs []string,
 	mutate func(*DorisVectorEmbedding) bool,
@@ -278,6 +323,46 @@ func (r *dorisRepository) rewriteChunkRows(ctx context.Context,
 		rows, err := r.loadRowsByChunkIDs(ctx, table, chunkIDs)
 		if err != nil {
 			return fmt.Errorf("load chunk rows from %s: %w", table, err)
+		}
+
+		updated := make([]*DorisVectorEmbedding, 0, len(rows))
+		for _, row := range rows {
+			if !mutate(row) {
+				continue
+			}
+			updated = append(updated, row)
+		}
+		if len(updated) == 0 {
+			continue
+		}
+
+		if err := r.replaceRows(ctx, table, updated); err != nil {
+			return fmt.Errorf("%s in %s: %w", action, table, err)
+		}
+	}
+	return nil
+}
+
+// rewriteKnowledgeRows 与 rewriteChunkRows 镜像，但按 knowledge_id 定位行，
+// 用于 BatchUpdateFolderID 的 inner_product_duplicate 路径。
+func (r *dorisRepository) rewriteKnowledgeRows(ctx context.Context,
+	knowledgeIDs []string,
+	mutate func(*DorisVectorEmbedding) bool,
+	action string,
+) error {
+	if len(knowledgeIDs) == 0 {
+		return nil
+	}
+
+	tables, err := r.listEmbeddingTables(ctx)
+	if err != nil {
+		return fmt.Errorf("list tables: %w", err)
+	}
+
+	for _, table := range tables {
+		rows, err := r.loadRowsByKnowledgeIDs(ctx, table, knowledgeIDs)
+		if err != nil {
+			return fmt.Errorf("load knowledge rows from %s: %w", table, err)
 		}
 
 		updated := make([]*DorisVectorEmbedding, 0, len(rows))
@@ -366,6 +451,40 @@ func (r *dorisRepository) batchUpdateChunkTagIDLegacy(ctx context.Context,
 	return nil
 }
 
+func (r *dorisRepository) batchUpdateFolderIDLegacy(ctx context.Context,
+	knowledgeFolderMap map[string]string,
+) error {
+	knowledgeIDs := make([]string, 0, len(knowledgeFolderMap))
+	for id := range knowledgeFolderMap {
+		knowledgeIDs = append(knowledgeIDs, id)
+	}
+
+	mapping, err := r.lookupKnowledgeRowKeys(ctx, knowledgeIDs)
+	if err != nil {
+		return err
+	}
+
+	byTable := make(map[string][]map[string]any)
+	for knowledgeID, locations := range mapping {
+		folderID, ok := knowledgeFolderMap[knowledgeID]
+		if !ok {
+			continue
+		}
+		for _, loc := range locations {
+			byTable[loc.table] = append(byTable[loc.table], map[string]any{
+				fieldID:       loc.id,
+				fieldFolderID: folderID,
+			})
+		}
+	}
+	for table, rows := range byTable {
+		if err := r.partialUpdateRows(ctx, table, []string{fieldID, fieldFolderID}, rows); err != nil {
+			return fmt.Errorf("partial update folder_id in %s: %w", table, err)
+		}
+	}
+	return nil
+}
+
 func (r *dorisRepository) loadRowsByChunkIDs(ctx context.Context,
 	table string, chunkIDs []string,
 ) ([]*DorisVectorEmbedding, error) {
@@ -385,6 +504,40 @@ func (r *dorisRepository) loadRowsByChunkIDs(ctx context.Context,
 		strings.Join(columnsForCopy, ", "),
 		table,
 		fieldChunkID,
+		strings.Join(placeholders, ", "),
+	)
+	rows, err := r.db.QueryContext(ctx, stmt, args...)
+	if err != nil {
+		return nil, err
+	}
+	batch, err := scanCopyRows(rows)
+	_ = rows.Close()
+	if err != nil {
+		return nil, err
+	}
+	return batch, nil
+}
+
+// loadRowsByKnowledgeIDs 与 loadRowsByChunkIDs 镜像，但按 knowledge_id 定位行。
+func (r *dorisRepository) loadRowsByKnowledgeIDs(ctx context.Context,
+	table string, knowledgeIDs []string,
+) ([]*DorisVectorEmbedding, error) {
+	if len(knowledgeIDs) == 0 {
+		return nil, nil
+	}
+
+	placeholders := make([]string, len(knowledgeIDs))
+	args := make([]any, len(knowledgeIDs))
+	for i, v := range knowledgeIDs {
+		placeholders[i] = "?"
+		args[i] = v
+	}
+
+	stmt := fmt.Sprintf(
+		"SELECT %s FROM `%s` WHERE %s IN (%s)",
+		strings.Join(columnsForCopy, ", "),
+		table,
+		fieldKnowledgeID,
 		strings.Join(placeholders, ", "),
 	)
 	rows, err := r.db.QueryContext(ctx, stmt, args...)
@@ -449,6 +602,57 @@ func (r *dorisRepository) lookupChunkRowKeys(ctx context.Context,
 				return nil, fmt.Errorf("scan row keys: %w", err)
 			}
 			out[chunkID] = append(out[chunkID], rowLocation{table: table, id: id})
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		_ = rows.Close()
+	}
+	return out, nil
+}
+
+// lookupKnowledgeRowKeys 与 lookupChunkRowKeys 镜像，但按 knowledge_id 定位行：
+//   - key：knowledge_id
+//   - value：[(table, id), ...]
+func (r *dorisRepository) lookupKnowledgeRowKeys(ctx context.Context,
+	knowledgeIDs []string,
+) (map[string][]rowLocation, error) {
+	if len(knowledgeIDs) == 0 {
+		return nil, nil
+	}
+	tables, err := r.listEmbeddingTables(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list tables: %w", err)
+	}
+	if len(tables) == 0 {
+		return nil, nil
+	}
+
+	placeholders := make([]string, len(knowledgeIDs))
+	args := make([]any, len(knowledgeIDs))
+	for i, v := range knowledgeIDs {
+		placeholders[i] = "?"
+		args[i] = v
+	}
+
+	out := make(map[string][]rowLocation)
+	for _, table := range tables {
+		stmt := fmt.Sprintf(
+			"SELECT %s, %s FROM `%s` WHERE %s IN (%s)",
+			fieldID, fieldKnowledgeID, table, fieldKnowledgeID, strings.Join(placeholders, ", "),
+		)
+		rows, err := r.db.QueryContext(ctx, stmt, args...)
+		if err != nil {
+			return nil, fmt.Errorf("lookup knowledge row keys in %s: %w", table, err)
+		}
+		for rows.Next() {
+			var id, knowledgeID string
+			if err := rows.Scan(&id, &knowledgeID); err != nil {
+				_ = rows.Close()
+				return nil, fmt.Errorf("scan row keys: %w", err)
+			}
+			out[knowledgeID] = append(out[knowledgeID], rowLocation{table: table, id: id})
 		}
 		if err := rows.Err(); err != nil {
 			_ = rows.Close()

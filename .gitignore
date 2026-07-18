@@ -1,9 +1,11 @@
 # 忽略所有隐藏文件和目录
 .*
+__debug*
 # 但不忽略特定隐藏文件和目录
 !.env.example
 !.gitignore
 !.github/
+!.openspec.yaml
 
 # 敏感文件
 *.pem
@@ -57,3 +59,6 @@ fix-docker.sh
 
 # WeChat Mini Program local/private configuration
 miniprogram/project.private.config.json
+
+# Local builtin model config (do not commit; use builtin_models.yaml.example)
+config/builtin_models.yaml

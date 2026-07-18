@@ -5,3 +5,15 @@
 # acceptance/contract envelope tests.
 *.go text eol=lf
 cli/acceptance/testdata/**/*.json text eol=lf
+
+frontend/pnpm-lock.yaml linguist-generated=true
+
+# Agent 指引文件，不在网页上展开 diff
+AGENTS.md linguist-generated=true -diff
+CLAUDE.md linguist-generated=true -diff
+.agent/** linguist-generated=true -diff
+.agent/** linguist-generated=true -diff
+.opencode/** linguist-generated=true -diff
+.pi/** linguist-generated=true -diff
+.omp/** linguist-generated=true -diff
+openspec/** linguist-generated=true -diff

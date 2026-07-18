@@ -26,7 +26,7 @@ import (
 // CreateKnowledgeFromFile creates a knowledge entry from an uploaded file
 func (s *knowledgeService) CreateKnowledgeFromFile(ctx context.Context,
 	kbID string, file *multipart.FileHeader, metadata map[string]string, enableMultimodel *bool, customFileName string, tagIDs []string, channel string,
-	processOverrides *types.KnowledgeProcessOverrides,
+	processOverrides *types.KnowledgeProcessOverrides, folderID *string,
 ) (*types.Knowledge, error) {
 	logger.Info(ctx, "Start creating knowledge from file")
 
@@ -84,6 +84,7 @@ func (s *knowledgeService) CreateKnowledgeFromFile(ctx context.Context,
 		FileName: fileName,
 		FileSize: file.Size,
 		FileHash: hash,
+		FolderID: folderID,
 	})
 	if err != nil {
 		logger.Errorf(ctx, "Failed to check knowledge existence: %v", err)
@@ -204,6 +205,7 @@ func (s *knowledgeService) CreateKnowledgeFromFile(ctx context.Context,
 		UpdatedAt:        time.Now(),
 		EmbeddingModelID: kb.EmbeddingModelID,
 		Metadata:         metadataJSON,
+		FolderID:         folderID,
 	}
 
 	if processOverrides != nil {
@@ -316,7 +318,7 @@ func isFileURL(rawURL, fileName, fileType string) bool {
 
 func (s *knowledgeService) CreateKnowledgeFromURL(ctx context.Context,
 	kbID string, rawURL string, fileName string, fileType string, enableMultimodel *bool, title string, tagIDs []string, channel string,
-	processOverrides *types.KnowledgeProcessOverrides,
+	processOverrides *types.KnowledgeProcessOverrides, folderID *string,
 ) (*types.Knowledge, error) {
 	logger.Info(ctx, "Start creating knowledge from URL")
 	logger.Infof(ctx, "Knowledge base ID: %s, URL: %s", kbID, rawURL)
@@ -324,7 +326,7 @@ func (s *knowledgeService) CreateKnowledgeFromURL(ctx context.Context,
 	// Route to file_url logic when the URL points to a downloadable file
 	if isFileURL(rawURL, fileName, fileType) {
 		return s.createKnowledgeFromFileURL(
-			ctx, kbID, rawURL, fileName, fileType, enableMultimodel, title, tagIDs, channel, processOverrides,
+			ctx, kbID, rawURL, fileName, fileType, enableMultimodel, title, tagIDs, channel, processOverrides, folderID,
 		)
 	}
 
@@ -363,6 +365,7 @@ func (s *knowledgeService) CreateKnowledgeFromURL(ctx context.Context,
 		Type:     "url",
 		URL:      url,
 		FileHash: fileHash,
+		FolderID: folderID,
 	})
 	if err != nil {
 		logger.Errorf(ctx, "Failed to check knowledge existence: %v", err)
@@ -404,6 +407,7 @@ func (s *knowledgeService) CreateKnowledgeFromURL(ctx context.Context,
 		CreatedAt:        time.Now(),
 		UpdatedAt:        time.Now(),
 		EmbeddingModelID: kb.EmbeddingModelID,
+		FolderID:         folderID,
 	}
 
 	// Save knowledge record
@@ -528,6 +532,7 @@ func (s *knowledgeService) createKnowledgeFromFileURL(
 	tagIDs []string,
 	channel string,
 	processOverrides *types.KnowledgeProcessOverrides,
+	folderID *string,
 ) (*types.Knowledge, error) {
 	logger.Info(ctx, "Start creating knowledge from file URL")
 	logger.Infof(ctx, "Knowledge base ID: %s, file URL: %s", kbID, fileURL)
@@ -591,6 +596,7 @@ func (s *knowledgeService) createKnowledgeFromFileURL(
 		Type:     "file_url",
 		URL:      fileURL,
 		FileHash: fileHash,
+		FolderID: folderID,
 	})
 	if err != nil {
 		logger.Errorf(ctx, "Failed to check knowledge existence: %v", err)
@@ -631,6 +637,7 @@ func (s *knowledgeService) createKnowledgeFromFileURL(
 		CreatedAt:        time.Now(),
 		UpdatedAt:        time.Now(),
 		EmbeddingModelID: kb.EmbeddingModelID,
+		FolderID:         folderID,
 	}
 	if knowledge.Title == "" {
 		knowledge.Title = displayName
@@ -787,6 +794,7 @@ func (s *knowledgeService) CreateKnowledgeFromManual(ctx context.Context,
 		EmbeddingModelID: kb.EmbeddingModelID,
 		FileName:         fileName,
 		FileType:         types.KnowledgeTypeManual,
+		FolderID:         payload.FolderID,
 	}
 	if err := knowledge.SetManualMetadata(meta); err != nil {
 		logger.Errorf(ctx, "Failed to set manual metadata: %v", err)

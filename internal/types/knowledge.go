@@ -31,6 +31,7 @@ const (
 	ChannelNotion           = "notion"            // Notion
 	ChannelYuque            = "yuque"             // Yuque (语雀)
 	ChannelRSS              = "rss"               // RSS / Atom feed
+	ChannelSVN              = "svn"               // SVN repository
 )
 
 // Knowledge parse status constants
@@ -104,6 +105,16 @@ type KnowledgeListFilter struct {
 	UpdatedFrom time.Time
 	// UpdatedTo, when non-zero, keeps rows with updated_at <= UpdatedTo.
 	UpdatedTo time.Time
+	// FolderID filters knowledge entries by folder. Empty means no folder filter.
+	// Use "__root__" to filter for items at the root level (folder_id IS NULL).
+	FolderID string
+	// Recursive, when true alongside a non-empty FolderID, includes entries from
+	// all descendant subfolders.
+	Recursive bool
+	// folderIDs is an internal field set by the repository when Recursive is true;
+	// it holds the pre-resolved folder IDs (scope folder + all descendants).
+	// This avoids a non-constant LIKE subquery that can't use the path index.
+	FolderIDs []string
 }
 
 // Knowledge represents a knowledge entity in the system.
@@ -164,10 +175,42 @@ type Knowledge struct {
 	ProcessedAt *time.Time `json:"processed_at"`
 	// Error message of the knowledge
 	ErrorMessage string `json:"error_message"`
+	// Folder ID that this knowledge entry belongs to, nil for root level
+	FolderID *string `json:"folder_id" gorm:"type:varchar(36)"`
 	// Deletion time of the knowledge
 	DeletedAt gorm.DeletedAt `json:"deleted_at"         gorm:"index"`
 	// Knowledge base name (not stored in database, populated on query)
 	KnowledgeBaseName string `json:"knowledge_base_name" gorm:"-"`
+}
+
+// GetFolderID returns the folder ID as a string, empty for root-level entries.
+func (k *Knowledge) GetFolderID() string {
+	if k == nil || k.FolderID == nil {
+		return ""
+	}
+	return *k.FolderID
+}
+
+// FolderIDPtrToString converts a *string folder ID to a string, returning "" for nil (root).
+func FolderIDPtrToString(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
+// BackfillKBError records a per-KB failure during a folder-metadata backfill sweep.
+type BackfillKBError struct {
+	KBID  string `json:"kb_id"`
+	Error string `json:"error"`
+}
+
+// BackfillResult reports the outcome of a folder-metadata backfill operation.
+type BackfillResult struct {
+	TotalKBs              int               `json:"total_kbs"`
+	ProcessedKBs          int               `json:"processed_kbs"`
+	TotalKnowledgeUpdated int               `json:"total_knowledge_updated"`
+	Errors                []BackfillKBError `json:"errors,omitempty"`
 }
 
 // GetMetadata returns the metadata as a map[string]string.
@@ -209,6 +252,7 @@ type ManualKnowledgePayload struct {
 	Content       string                     `json:"content"`
 	Status        string                     `json:"status"`
 	TagIDs        []string                   `json:"tag_ids"`
+	FolderID      *string                    `json:"folder_id,omitempty"`
 	Channel       string                     `json:"channel"`
 	ProcessConfig *KnowledgeProcessOverrides `json:"process_config,omitempty"`
 }
@@ -412,4 +456,6 @@ type KnowledgeCheckParams struct {
 	Passages []string
 	// Knowledge type
 	Type string
+	// Folder ID for scoping duplicate check to a specific folder (nil = root, omit = KB-wide)
+	FolderID *string
 }

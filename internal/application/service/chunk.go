@@ -148,6 +148,22 @@ func (s *chunkService) ListChunksByKnowledgeID(ctx context.Context, knowledgeID 
 	return chunks, nil
 }
 
+// ListAllContentChunksByKnowledgeID lists all content-type chunks (text, parent_text, image_ocr, image_caption)
+// for a knowledge document. This is used by post-process stages that need the full text content.
+func (s *chunkService) ListAllContentChunksByKnowledgeID(ctx context.Context, knowledgeID string) ([]*types.Chunk, error) {
+	tenantID := types.MustTenantIDFromContext(ctx)
+	chunks, err := s.chunkRepository.ListAllContentChunksByKnowledgeID(ctx, tenantID, knowledgeID)
+	if err != nil {
+		logger.ErrorWithFields(ctx, err, map[string]interface{}{
+			"knowledge_id": knowledgeID,
+			"tenant_id":    tenantID,
+		})
+		return nil, err
+	}
+	logger.Infof(ctx, "Retrieved %d content chunks successfully", len(chunks))
+	return chunks, nil
+}
+
 // ListPagedChunksByKnowledgeID lists chunks for a knowledge ID with pagination
 // This method retrieves chunks with pagination support for better performance with large datasets
 // Parameters:

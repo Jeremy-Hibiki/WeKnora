@@ -9,6 +9,9 @@ import (
 
 	"github.com/Tencent/WeKnora/internal/models/chat"
 	"github.com/Tencent/WeKnora/internal/types"
+	"github.com/Tencent/WeKnora/internal/types/interfaces"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestSlugify(t *testing.T) {
@@ -486,4 +489,125 @@ func (r *wikiPendingRepoForCleanupTest) DeleteByDedupKey(
 	string,
 ) error {
 	return nil
+}
+
+// --- isKnowledgeGone: wiki worker must skip failed knowledge --------------
+// isKnowledgeGone checks whether a knowledge is in a terminal state where
+// wiki extraction should be skipped. We test that ParseStatusFailed is
+// treated as terminal (like Deleting/Cancelled), and that non-terminal
+// statuses (Completed/Finalizing/Processing) are NOT skipped.
+
+// minimalKnowledgeSvc is a fake KnowledgeService that only implements
+// GetKnowledgeByIDOnly — enough for isKnowledgeGone. All other methods
+// panic if called.
+type minimalKnowledgeSvc struct {
+	interfaces.KnowledgeService // embed nil interface so unimplemented methods panic
+	knowledge                   *types.Knowledge
+}
+
+func (m *minimalKnowledgeSvc) GetKnowledgeByIDOnly(_ context.Context, _ string) (*types.Knowledge, error) {
+	return m.knowledge, nil
+}
+
+func TestIsKnowledgeGone_FailedStatus(t *testing.T) {
+	svc := &wikiIngestService{
+		knowledgeSvc: &minimalKnowledgeSvc{
+			knowledge: &types.Knowledge{ID: "k1", ParseStatus: types.ParseStatusFailed},
+		},
+	}
+	assert.True(t, svc.isKnowledgeGone(context.Background(), "kb-1", "k1"),
+		"ParseStatusFailed must be treated as gone")
+}
+
+func TestIsKnowledgeGone_DeletingAndCancelled(t *testing.T) {
+	for _, status := range []string{types.ParseStatusDeleting, types.ParseStatusCancelled} {
+		svc := &wikiIngestService{
+			knowledgeSvc: &minimalKnowledgeSvc{
+				knowledge: &types.Knowledge{ID: "k1", ParseStatus: status},
+			},
+		}
+		assert.True(t, svc.isKnowledgeGone(context.Background(), "kb-1", "k1"),
+			"%s must be treated as gone", status)
+	}
+}
+
+func TestIsKnowledgeGone_NotGoneForNonTerminal(t *testing.T) {
+	for _, status := range []string{types.ParseStatusCompleted, types.ParseStatusFinalizing, types.ParseStatusProcessing} {
+		svc := &wikiIngestService{
+			knowledgeSvc: &minimalKnowledgeSvc{
+				knowledge: &types.Knowledge{ID: "k1", ParseStatus: status},
+			},
+		}
+		assert.False(t, svc.isKnowledgeGone(context.Background(), "kb-1", "k1"),
+			"%s must NOT be treated as gone", status)
+	}
+}
+
+// --- trimPendingList / requeueFailedOps must survive cancelled context -----
+// On asynq timeout (60m) the batch context is cancelled. trimPendingList
+// (deletes successful ops) and requeueFailedOps (increments fail_count,
+// dead-letters after cap) must use a detached context for their DB writes
+// — otherwise fail_count never increments and the op loops forever.
+
+// ctxAwarePendingRepo wraps a minimal TaskPendingOpsRepository that records
+// whether the ctx passed to each method was cancelled. This lets us prove
+// the detached-ctx pattern works without a real DB.
+type ctxAwarePendingRepo struct {
+	interfaces.TaskPendingOpsRepository // embed nil so unused methods panic
+	deleteIDsCtxCancelled               *bool
+	incrFailCountCtxCancelled           *bool
+	incrFailCountResult                 int
+	releaseIDsCtxCancelled              *bool
+}
+
+func (r *ctxAwarePendingRepo) DeleteByIDs(ctx context.Context, ids []int64) error {
+	cancelled := ctx.Err() != nil
+	r.deleteIDsCtxCancelled = &cancelled
+	return nil
+}
+
+func (r *ctxAwarePendingRepo) IncrFailCount(ctx context.Context, id int64) (int, error) {
+	cancelled := ctx.Err() != nil
+	r.incrFailCountCtxCancelled = &cancelled
+	return r.incrFailCountResult, nil
+}
+
+func (r *ctxAwarePendingRepo) ReleaseByIDs(ctx context.Context, ids []int64) error {
+	cancelled := ctx.Err() != nil
+	r.releaseIDsCtxCancelled = &cancelled
+	return nil
+}
+
+func TestTrimPendingList_UsesDetachedContext(t *testing.T) {
+	repo := &ctxAwarePendingRepo{}
+	svc := &wikiIngestService{pendingRepo: repo}
+
+	// Cancel the batch ctx as asynq timeout would.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	svc.trimPendingList(ctx, []int64{1, 2, 3})
+
+	require.NotNil(t, repo.deleteIDsCtxCancelled, "DeleteByIDs must have been called")
+	assert.False(t, *repo.deleteIDsCtxCancelled,
+		"DeleteByIDs must use a detached (non-cancelled) context")
+}
+
+func TestRequeueFailedOps_UsesDetachedContext(t *testing.T) {
+	repo := &ctxAwarePendingRepo{incrFailCountResult: 1}
+	svc := &wikiIngestService{pendingRepo: repo}
+
+	// Cancel the batch ctx as asynq timeout would.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	svc.requeueFailedOps(ctx, WikiIngestPayload{TenantID: 1, KnowledgeBaseID: "kb-1"},
+		[]WikiPendingOp{{dbID: 1, KnowledgeID: "k1", Op: WikiOpIngest, DocTitle: "doc"}})
+
+	require.NotNil(t, repo.incrFailCountCtxCancelled, "IncrFailCount must have been called")
+	assert.False(t, *repo.incrFailCountCtxCancelled,
+		"IncrFailCount must use a detached (non-cancelled) context")
+	require.NotNil(t, repo.releaseIDsCtxCancelled, "ReleaseByIDs must have been called")
+	assert.False(t, *repo.releaseIDsCtxCancelled,
+		"ReleaseByIDs must use a detached (non-cancelled) context")
 }

@@ -19,6 +19,10 @@ type PipelineRequest struct {
 	EmbeddingTopK    int           `json:"embedding_top_k"`
 	VectorDatabase   string        `json:"vector_database"`
 
+	// Folder scope parameters
+	FolderIDs         []string `json:"folder_ids,omitempty"`
+	IncludeSubfolders bool     `json:"include_subfolders,omitempty"`
+
 	// Rerank parameters
 	RerankModelID   string  `json:"rerank_model_id"`
 	RerankTopK      int     `json:"rerank_top_k"`
@@ -177,6 +181,8 @@ func (c *ChatManage) Clone() *ChatManage {
 			copy(tagIDsCopy, t.TagIDs)
 			scopeTagIDsCopy := make([]string, len(t.ScopeTagIDs))
 			copy(scopeTagIDsCopy, t.ScopeTagIDs)
+			folderIDsCopy := make([]string, len(t.FolderIDs))
+			copy(folderIDsCopy, t.FolderIDs)
 			searchTargets[i] = &SearchTarget{
 				Type:                    t.Type,
 				KnowledgeBaseID:         t.KnowledgeBaseID,
@@ -185,6 +191,8 @@ func (c *ChatManage) Clone() *ChatManage {
 				TagIDs:                  tagIDsCopy,
 				ScopeTagIDs:             scopeTagIDsCopy,
 				DisableRecallThresholds: t.DisableRecallThresholds,
+				FolderIDs:               folderIDsCopy,
+				IncludeSubfolders:       t.IncludeSubfolders,
 			}
 		}
 	}
@@ -213,6 +221,8 @@ func (c *ChatManage) Clone() *ChatManage {
 			KeywordThreshold:         c.KeywordThreshold,
 			EmbeddingTopK:            c.EmbeddingTopK,
 			VectorDatabase:           c.VectorDatabase,
+			FolderIDs:                append([]string(nil), c.FolderIDs...),
+			IncludeSubfolders:        c.IncludeSubfolders,
 			RerankModelID:            c.RerankModelID,
 			RerankTopK:               c.RerankTopK,
 			RerankThreshold:          c.RerankThreshold,

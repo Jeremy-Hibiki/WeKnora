@@ -372,7 +372,7 @@ check_remote_dev_connectivity() {
         local h="${rest%%:*}"
         local p="${rest##*:}"
         if command -v nc &> /dev/null; then
-            if nc -z -G 3 "$h" "$p" 2>/dev/null; then
+            if nc -z -w 3 "$h" "$p" 2>/dev/null; then
                 log_success "${name} ${h}:${p} 可达"
             else
                 log_error "${name} ${h}:${p} 不可达 (no route / connection refused)"

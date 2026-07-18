@@ -346,3 +346,11 @@ func (v *KeywordsVectorHybridRetrieveEngineService) BatchUpdateChunkTagID(
 ) error {
 	return v.indexRepository.BatchUpdateChunkTagID(ctx, chunkTagMap)
 }
+
+// BatchUpdateFolderID updates the folder ID of chunks in batch
+func (v *KeywordsVectorHybridRetrieveEngineService) BatchUpdateFolderID(
+	ctx context.Context,
+	knowledgeFolderMap map[string]string,
+) error {
+	return v.indexRepository.BatchUpdateFolderID(ctx, knowledgeFolderMap)
+}

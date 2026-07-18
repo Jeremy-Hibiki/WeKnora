@@ -311,6 +311,13 @@ func (e *elasticsearchRepository) getBaseConds(params typesLocal.RetrieveParams)
 			},
 		}})
 	}
+	if len(params.FolderIDs) > 0 {
+		must = append(must, types.Query{Terms: &types.TermsQuery{
+			TermsQuery: map[string]types.TermsQueryField{
+				e.idField("folder_id"): params.FolderIDs,
+			},
+		}})
+	}
 	// Filter by tag IDs if specified
 	if len(params.TagIDs) > 0 {
 		must = append(must, types.Query{Terms: &types.TermsQuery{
@@ -816,5 +823,57 @@ func (e *elasticsearchRepository) BatchUpdateChunkTagID(
 	}
 
 	log.Infof("[Elasticsearch] Successfully batch updated chunk tag ID")
+	return nil
+}
+
+// BatchUpdateFolderID updates the folder ID of chunks in batch
+func (e *elasticsearchRepository) BatchUpdateFolderID(
+	ctx context.Context,
+	knowledgeFolderMap map[string]string,
+) error {
+	log := logger.GetLogger(ctx)
+	if len(knowledgeFolderMap) == 0 {
+		log.Warnf("[Elasticsearch] Knowledge folder map is empty, skipping update")
+		return nil
+	}
+
+	log.Infof("[Elasticsearch] Batch updating folder ID, count: %d", len(knowledgeFolderMap))
+
+	// Group knowledge IDs by folder ID for batch updates
+	folderGroups := make(map[string][]string)
+	for knowledgeID, folderID := range knowledgeFolderMap {
+		folderGroups[folderID] = append(folderGroups[folderID], knowledgeID)
+	}
+
+	// Batch update chunks for each folder ID using update_by_query
+	for folderID, knowledgeIDs := range folderGroups {
+		query := types.NewQuery()
+		query.Bool = &types.BoolQuery{
+			Must: []types.Query{
+				{Terms: &types.TermsQuery{
+					TermsQuery: map[string]types.TermsQueryField{
+						e.idField("knowledge_id"): knowledgeIDs,
+					},
+				}},
+			},
+		}
+		source := "ctx._source.folder_id = params.folder_id"
+		lang := scriptlanguage.Painless
+		script := types.Script{
+			Source: &source,
+			Lang:   &lang,
+			Params: map[string]json.RawMessage{
+				"folder_id": json.RawMessage(`"` + folderID + `"`),
+			},
+		}
+		_, err := e.client.UpdateByQuery(e.index).Query(query).Script(&script).Do(ctx)
+		if err != nil {
+			log.Errorf("[Elasticsearch] Failed to update chunks with folder_id %s: %v", folderID, err)
+			return err
+		}
+		log.Infof("[Elasticsearch] Updated %d knowledge entries to folder_id=%s", len(knowledgeIDs), folderID)
+	}
+
+	log.Infof("[Elasticsearch] Successfully batch updated folder ID")
 	return nil
 }

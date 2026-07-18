@@ -545,6 +545,7 @@ func (s *knowledgeService) processChunks(ctx context.Context,
 				ChunkID:         chunk.ID,
 				KnowledgeID:     knowledge.ID,
 				KnowledgeBaseID: knowledge.KnowledgeBaseID,
+				FolderID:        knowledge.GetFolderID(),
 				IsEnabled:       true,
 			})
 		}
@@ -1176,6 +1177,7 @@ func (s *knowledgeService) ProcessSummaryGeneration(ctx context.Context, t *asyn
 			ChunkID:         summaryChunk.ID,
 			KnowledgeID:     knowledge.ID,
 			KnowledgeBaseID: knowledge.KnowledgeBaseID,
+			FolderID:        knowledge.GetFolderID(),
 			IsEnabled:       true,
 		}}
 
@@ -1191,6 +1193,215 @@ func (s *knowledgeService) ProcessSummaryGeneration(ctx context.Context, t *asyn
 
 	logger.Infof(ctx, "Successfully generated summary for knowledge: %s", payload.KnowledgeID)
 	summaryOut["status"] = "completed"
+	return nil
+}
+
+// ProcessParentSummaryGeneration handles parent chunk summary generation tasks.
+// Each task processes a batch of parent chunks, generating an LLM summary for each.
+// ParentSummary is NOT stored in DB — only vector indexed with SourceID = parent chunk ID.
+func (s *knowledgeService) ProcessParentSummaryGeneration(ctx context.Context, t *asynq.Task) (retErr error) {
+	var payload types.ParentSummaryGenerationPayload
+	if err := json.Unmarshal(t.Payload(), &payload); err != nil {
+		logger.Warnf(ctx, "[ProcessParentSummaryGeneration] Failed to unmarshal payload: %v", err)
+		return nil
+	}
+
+	if len(payload.ParentChunkIDs) == 0 {
+		logger.Warnf(ctx, "[ProcessParentSummaryGeneration] Empty ParentChunkIDs, skipping")
+		return nil
+	}
+
+	ctx = context.WithValue(ctx, types.TenantIDContextKey, payload.TenantID)
+	if payload.Language != "" {
+		ctx = context.WithValue(ctx, types.LanguageContextKey, payload.Language)
+	}
+
+	if attemptSuperseded(ctx, s.tracker(), payload.KnowledgeID, payload.Attempt) {
+		logger.Infof(ctx, "[ProcessParentSummaryGeneration] Superseded (attempt=%d, knowledge=%s), skipping",
+			payload.Attempt, payload.KnowledgeID)
+		return nil
+	}
+
+	sourceTag := fmt.Sprintf("postprocess.parent_summary[batch_%d]", payload.BatchIndex)
+	span := s.beginPostprocessSubspan(ctx, payload.KnowledgeID, payload.Attempt, sourceTag, nil)
+	defer func() {
+		baseSource := "parent_summary"
+		finalizeSubtaskDetached(ctx, s.repo, payload.KnowledgeID, baseSource, retErr, false, isFinalAsynqAttempt(ctx))
+		if span != nil {
+			if retErr != nil {
+				s.tracker().FailSpan(ctx, span, "parent_summary_error", retErr.Error(), retErr)
+			} else {
+				s.tracker().EndSpan(ctx, span, types.JSONMap{
+					"parent_summary_indexed": len(payload.ParentChunkIDs),
+				})
+			}
+		}
+	}()
+
+	kb, err := s.kbService.GetKnowledgeBaseByIDOnly(ctx, payload.KnowledgeBaseID)
+	if err != nil || kb == nil {
+		logger.Warnf(ctx, "[ProcessParentSummaryGeneration] KB %s not found", payload.KnowledgeBaseID)
+		return nil
+	}
+	if kb.SummaryModelID == "" {
+		logger.Warnf(ctx, "[ProcessParentSummaryGeneration] No summary model for KB %s", payload.KnowledgeBaseID)
+		return nil
+	}
+
+	knowledge, err := s.repo.GetKnowledgeByID(ctx, payload.TenantID, payload.KnowledgeID)
+	if err != nil || knowledge == nil {
+		logger.Warnf(ctx, "[ProcessParentSummaryGeneration] Knowledge %s not found", payload.KnowledgeID)
+		return nil
+	}
+	if knowledge.ParseStatus == types.ParseStatusCancelled || knowledge.ParseStatus == types.ParseStatusDeleting {
+		return nil
+	}
+
+	chatModel, err := s.modelService.GetChatModel(ctx, kb.SummaryModelID)
+	if err != nil {
+		return fmt.Errorf("get chat model %s: %w", kb.SummaryModelID, err)
+	}
+
+	maxTokens := 32768
+	if s.config.Conversation.Summary != nil && s.config.Conversation.Summary.MaxCompletionTokens > 0 {
+		configTokens := s.config.Conversation.Summary.MaxCompletionTokens
+		if configTokens < maxTokens {
+			maxTokens = configTokens
+		}
+	}
+
+	var indexInfoList []*types.IndexInfo
+
+	for _, parentChunkID := range payload.ParentChunkIDs {
+		// Fetch parent chunk for fallback content and offsets
+		parent, err := s.chunkService.GetChunkByID(ctx, parentChunkID)
+		if err != nil || parent == nil {
+			logger.Warnf(ctx, "[ProcessParentSummaryGeneration] Parent chunk %s not found", parentChunkID)
+			continue
+		}
+
+		// Fetch children and build content (same pattern as getSummary)
+		children, err := s.chunkService.ListChunkByParentID(ctx, payload.TenantID, parentChunkID)
+		if err != nil {
+			logger.Warnf(ctx, "[ProcessParentSummaryGeneration] Failed to list children for parent %s: %v", parentChunkID, err)
+			continue
+		}
+
+		var textChildren []*types.Chunk
+		for _, c := range children {
+			if c.ChunkType == types.ChunkTypeText || c.ChunkType == types.ChunkTypeImageOCR || c.ChunkType == types.ChunkTypeImageCaption {
+				textChildren = append(textChildren, c)
+			}
+		}
+		sort.Slice(textChildren, func(i, j int) bool {
+			return textChildren[i].StartAt < textChildren[j].StartAt
+		})
+
+		// Build content from children
+		content := ""
+		for _, c := range textChildren {
+			runes := []rune(content)
+			if c.StartAt <= len(runes) {
+				content = string(runes[:c.StartAt]) + c.Content
+			} else {
+				content = content + c.Content
+			}
+		}
+
+		// Check sufficient content, fallback if needed
+		if err := checkSufficientSummaryContent(ctx, payload.KnowledgeID, content); err != nil {
+			logger.Warnf(ctx, "[ProcessParentSummaryGeneration] Insufficient content for parent %s, using fallback: %v", parentChunkID, err)
+			fallbackLen := 500
+			if len(parent.Content) < fallbackLen {
+				fallbackLen = len(parent.Content)
+			}
+			content = parent.Content[:fallbackLen]
+		}
+
+		// Sample long content
+		maxInputChars := 4096
+		if s.config.Conversation.Summary != nil && s.config.Conversation.Summary.MaxInputChars > 0 {
+			limit := s.config.Conversation.Summary.MaxInputChars
+			if limit < maxInputChars {
+				maxInputChars = limit
+			}
+		}
+		content = sampleLongContent(content, maxInputChars)
+
+		// LLM call
+		summaryPrompt := types.RenderPromptPlaceholders(s.config.Conversation.GenerateSummaryPrompt, types.PlaceholderValues{
+			"language": types.LanguageNameFromContext(ctx),
+		})
+		thinking := false
+		summary, err := chatModel.Chat(ctx, []chat.Message{
+			{Role: "system", Content: summaryPrompt},
+			{Role: "user", Content: content},
+		}, &chat.ChatOptions{
+			Temperature: 0.3,
+			MaxTokens:   maxTokens,
+			Thinking:    &thinking,
+		})
+		if err != nil {
+			logger.Warnf(ctx, "[ProcessParentSummaryGeneration] LLM failed for parent %s, using fallback: %v", parentChunkID, err)
+			fallbackLen := 500
+			if len(parent.Content) < fallbackLen {
+				fallbackLen = len(parent.Content)
+			}
+			summary = &types.ChatResponse{Content: parent.Content[:fallbackLen]}
+		}
+
+		logger.Infof(ctx, "[ProcessParentSummaryGeneration] LLM summary for parent %s: %s", parentChunkID, summary.Content)
+		logger.Infof(ctx, "[ProcessParentSummaryGeneration] summary for parent %s: len=%d chars", parentChunkID, len([]rune(summary.Content)))
+
+		// Build IndexInfo: NOT stored in DB, only vector indexed.
+		// SourceID = parentChunkID (reused, no new UUID).
+		// Content = LLM summary (for vector retrieval).
+		if kb.NeedsEmbeddingModel() && strings.TrimSpace(summary.Content) != "" {
+			indexInfo := &types.IndexInfo{
+				Content:         summary.Content,
+				SourceID:        parentChunkID,
+				SourceType:      types.ChunkSourceType,
+				ChunkID:         parentChunkID,
+				KnowledgeID:     payload.KnowledgeID,
+				KnowledgeBaseID: payload.KnowledgeBaseID,
+				FolderID:        knowledge.GetFolderID(),
+				IsEnabled:       true,
+			}
+			indexInfoList = append(indexInfoList, indexInfo)
+		} else if strings.TrimSpace(summary.Content) == "" {
+			logger.Warnf(ctx, "[ProcessParentSummaryGeneration] Empty summary content for parent %s, skipping vector index",
+				parentChunkID)
+		}
+	}
+
+	// Index summaries if embedding needed (no DB chunk creation).
+	if kb.NeedsEmbeddingModel() && len(indexInfoList) > 0 {
+		tenantInfo, err := s.tenantRepo.GetTenantByID(ctx, payload.TenantID)
+		if err != nil {
+			logger.Errorf(ctx, "[ProcessParentSummaryGeneration] Failed to get tenant info: %v", err)
+			return fmt.Errorf("failed to get tenant info: %w", err)
+		}
+		ctx = context.WithValue(ctx, types.TenantInfoContextKey, tenantInfo)
+
+		retrieveEngine, err := retriever.CreateRetrieveEngineForKB(
+			ctx, s.retrieveEngine, s.ownership, tenantInfo.ID, kb.VectorStoreID)
+		if err != nil {
+			logger.Warnf(ctx, "[ProcessParentSummaryGeneration] Failed to init retrieve engine: %v", err)
+			return fmt.Errorf("failed to init retrieve engine: %w", err)
+		}
+
+		embeddingModel, err := s.modelService.GetEmbeddingModel(ctx, kb.EmbeddingModelID)
+		if err != nil {
+			logger.Errorf(ctx, "[ProcessParentSummaryGeneration] Failed to get embedding model: %v", err)
+			return fmt.Errorf("failed to get embedding model: %w", err)
+		}
+
+		if err := retrieveEngine.BatchIndex(ctx, embeddingModel, indexInfoList); err != nil {
+			logger.Warnf(ctx, "[ProcessParentSummaryGeneration] Failed to batch index: %v", err)
+			return fmt.Errorf("batch index: %w", err)
+		}
+	}
+
 	return nil
 }
 
@@ -1553,6 +1764,7 @@ func (s *knowledgeService) processQuestionGenerationForKnowledge(ctx context.Con
 				ChunkID:         chunk.ID,
 				KnowledgeID:     knowledge.ID,
 				KnowledgeBaseID: knowledge.KnowledgeBaseID,
+				FolderID:        knowledge.GetFolderID(),
 				IsEnabled:       true,
 			})
 		}
@@ -2377,6 +2589,17 @@ func (s *knowledgeService) updateChunkVector(ctx context.Context, kbID string, c
 		return err
 	}
 
+	// Resolve folder_id from the first chunk's knowledge entry
+	var folderID string
+	for _, chunk := range chunks {
+		if chunk.KnowledgeID != "" {
+			if knowledge, err := s.repo.GetKnowledgeByID(ctx, types.MustTenantIDFromContext(ctx), chunk.KnowledgeID); err == nil && knowledge != nil {
+				folderID = knowledge.GetFolderID()
+			}
+			break
+		}
+	}
+
 	// Initialize composite retrieve engine from tenant configuration
 	indexInfo := make([]*types.IndexInfo, 0, len(chunks))
 	ids := make([]string, 0, len(chunks))
@@ -2392,6 +2615,7 @@ func (s *knowledgeService) updateChunkVector(ctx context.Context, kbID string, c
 			ChunkID:         chunk.ID,
 			KnowledgeID:     chunk.KnowledgeID,
 			KnowledgeBaseID: chunk.KnowledgeBaseID,
+			FolderID:        folderID,
 			IsEnabled:       true,
 		})
 		ids = append(ids, chunk.ID)
@@ -3051,6 +3275,8 @@ func (s *knowledgeService) ProcessDocument(ctx context.Context, t *asynq.Task) e
 		processOpts.Metadata = convertResult.Metadata
 	}
 
+	logger.Infof(ctx, "[Chunk-debug] parent_child check: EnableParentChild=%v ParentChunkSize=%d ChildChunkSize=%d knowledge=%s kb=%s",
+		eff.ChunkingConfig.EnableParentChild, eff.ChunkingConfig.ParentChunkSize, eff.ChunkingConfig.ChildChunkSize, knowledge.ID, knowledge.KnowledgeBaseID)
 	if eff.ChunkingConfig.EnableParentChild {
 		parentCfg, childCfg := buildParentChildConfigs(eff.ChunkingConfig, chunkCfg)
 		pcResult := chunker.SplitParentChild(convertResult.MarkdownContent, parentCfg, childCfg)
@@ -3371,6 +3597,7 @@ func (s *knowledgeService) enqueueImageMultimodalTasks(
 			TenantID:        knowledge.TenantID,
 			KnowledgeID:     knowledge.ID,
 			KnowledgeBaseID: kb.ID,
+			FolderID:        knowledge.GetFolderID(),
 			ChunkID:         chunkID,
 			ImageURL:        img.ServingURL,
 			EnableOCR:       true,

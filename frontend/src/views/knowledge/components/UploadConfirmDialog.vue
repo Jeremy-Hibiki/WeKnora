@@ -10,70 +10,140 @@
           </button>
 
           <div class="upload-confirm-container">
-            <aside class="files-panel">
-              <div class="files-panel-header">
-                <h2 class="files-panel-title">{{ sourcePanelTitle }}</h2>
-                <div v-if="mode === 'file'" class="files-panel-actions">
-                  <span class="files-count">{{ batchItemCount }}</span>
-                  <KbUploadSourceDropdown
-                    :accept-file-types="acceptFileTypes"
-                    :supported-file-types="supportedFileTypes"
-                    :tooltip="t('uploadConfirm.continueAdd')"
-                    placement="bottom-left"
-                    @files="appendFiles"
-                    @url="appendUrl"
-                  />
+            <aside class="files-panel" :class="{ 'files-panel--wide': mode === 'file' }">
+              <template v-if="mode === 'file'">
+                <!-- File list section -->
+                <div class="file-list-section file-list-section--full">
+                  <div class="file-list-header">
+                    <span class="file-list-title">{{ sourcePanelTitle }}</span>
+                    <div class="file-list-actions">
+                      <span class="files-count">{{ batchItemCount }}</span>
+                      <KbUploadSourceDropdown
+                        :accept-file-types="acceptFileTypes"
+                        :supported-file-types="supportedFileTypes"
+                        :tooltip="t('uploadConfirm.continueAdd')"
+                        placement="bottom-left"
+                        @files="appendFiles"
+                        @url="appendUrl"
+                      />
+                    </div>
+                  </div>
+                  <!-- Folder structure tree view -->
+                  <div v-if="isFolderUpload && batchItemCount > 0" class="folder-upload-tree">
+                    <t-tree
+                      :data="tdTreeData"
+                      hover
+                      transition
+                      expand-all
+                      :expand-on-click-node="false"
+                    >
+                      <template #label="{ node }">
+                        <span class="td-tree-label-row">
+                          <t-icon
+                            v-if="node.data._type === 'folder'"
+                            :name="node.expanded ? 'folder-open' : 'folder'"
+                            size="16px"
+                            class="td-tree-node-icon folder-icon"
+                          />
+                          <t-icon
+                            v-else
+                            :name="getFileIcon(node.data._name || node.label)"
+                            size="14px"
+                            class="td-tree-node-icon file-icon"
+                          />
+                          <span
+                            class="td-tree-node-name"
+                            :title="node.label"
+                            @click="node.data._type === 'file' && handleTreeFileClick(node)"
+                          >{{ node.label }}</span>
+                          <span v-if="node.data._type === 'folder'" class="td-tree-node-meta">{{ node.data._count }}</span>
+                          <span v-else class="td-tree-node-meta">{{ formatFileSize(node.data._size || 0) }}</span>
+                          <span class="td-tree-node-actions">
+                            <t-button
+                              v-if="node.data._type === 'file'"
+                              theme="default"
+                              variant="text"
+                              size="small"
+                              shape="square"
+                              :aria-label="t('common.preview')"
+                              @click.stop="handleTreeFileClick(node)"
+                            >
+                              <t-icon name="browse" size="12px" />
+                            </t-button>
+                            <t-button
+                              theme="default"
+                              variant="text"
+                              size="small"
+                              shape="square"
+                              :aria-label="t('common.remove')"
+                              @click.stop="removeTreeFile(node)"
+                            >
+                              <t-icon name="close" size="12px" />
+                            </t-button>
+                          </span>
+                        </span>
+                      </template>
+                    </t-tree>
+                  </div>
+                  <!-- Flat file list (non-folder upload) -->
+                  <ul v-else-if="batchItemCount > 0" class="files-list">
+                    <li v-for="(url, index) in localUrls" :key="`url-${url}-${index}`" class="file-item">
+                      <t-icon name="link" class="file-icon" />
+                      <div class="file-meta">
+                        <span class="file-name" :title="url">{{ url }}</span>
+                        <span class="file-size">{{ t('uploadConfirm.urlItemLabel') }}</span>
+                      </div>
+                      <t-button
+                        theme="default"
+                        variant="text"
+                        size="small"
+                        shape="square"
+                        :aria-label="t('common.remove')"
+                        @click="removeUrl(index)"
+                      >
+                        <t-icon name="close" />
+                      </t-button>
+                    </li>
+                    <li v-for="(file, index) in localFiles" :key="`${file.name}-${index}`" class="file-item">
+                      <t-icon :name="getFileIcon(file.name)" class="file-icon" />
+                      <div class="file-meta">
+                        <span class="file-name" :title="file.name">{{ file.name }}</span>
+                        <span class="file-size">{{ formatFileSize(file.size) }}</span>
+                      </div>
+                      <t-button
+                        theme="default"
+                        variant="text"
+                        size="small"
+                        shape="square"
+                        :aria-label="t('common.remove')"
+                        @click="removeFile(index)"
+                      >
+                        <t-icon name="close" />
+                      </t-button>
+                    </li>
+                  </ul>
+                  <div v-else class="files-empty">{{ t('uploadConfirm.noItems') }}</div>
                 </div>
-              </div>
-              <div v-if="mode === 'manual' && manualPreview" class="manual-source-panel">
-                <p class="manual-source-title" :title="manualPreview.title">{{ manualPreview.title }}</p>
-                <p class="manual-source-meta">
-                  {{ t('uploadConfirm.manualCharCount', { count: manualCharCount }) }}
-                </p>
-              </div>
-              <div v-else-if="mode === 'reparse' && reparsePreview" class="manual-source-panel">
-                <p class="manual-source-title" :title="reparsePreview.fileName">
-                  {{ reparsePreview.fileName || t('uploadConfirm.reparseSource') }}
-                </p>
-                <p class="manual-source-meta">{{ t('uploadConfirm.reparseHint') }}</p>
-              </div>
-              <ul v-else-if="mode === 'file' && batchItemCount > 0" class="files-list">
-                <li v-for="(url, index) in localUrls" :key="`url-${url}-${index}`" class="file-item">
-                  <t-icon name="link" class="file-icon" />
-                  <div class="file-meta">
-                    <span class="file-name" :title="url">{{ url }}</span>
-                    <span class="file-size">{{ t('uploadConfirm.urlItemLabel') }}</span>
-                  </div>
-                  <t-button
-                    theme="default"
-                    variant="text"
-                    size="small"
-                    shape="square"
-                    :aria-label="t('common.remove')"
-                    @click="removeUrl(index)"
-                  >
-                    <t-icon name="close" />
-                  </t-button>
-                </li>
-                <li v-for="(file, index) in localFiles" :key="`${file.name}-${index}`" class="file-item">
-                  <t-icon :name="getFileIcon(file.name)" class="file-icon" />
-                  <div class="file-meta">
-                    <span class="file-name" :title="file.name">{{ file.name }}</span>
-                    <span class="file-size">{{ formatFileSize(file.size) }}</span>
-                  </div>
-                  <t-button
-                    theme="default"
-                    variant="text"
-                    size="small"
-                    shape="square"
-                    :aria-label="t('common.remove')"
-                    @click="removeFile(index)"
-                  >
-                    <t-icon name="close" />
-                  </t-button>
-                </li>
-              </ul>
-              <div v-else-if="mode === 'file'" class="files-empty">{{ t('uploadConfirm.noItems') }}</div>
+              </template>
+
+              <!-- Non-file mode panels -->
+              <template v-else>
+                <div class="files-panel-header">
+                  <h2 class="files-panel-title">{{ sourcePanelTitle }}</h2>
+                </div>
+                <div v-if="mode === 'manual' && manualPreview" class="manual-source-panel">
+                  <p class="manual-source-title" :title="manualPreview.title">{{ manualPreview.title }}</p>
+                  <p class="manual-source-meta">
+                    {{ t('uploadConfirm.manualCharCount', { count: manualCharCount }) }}
+                  </p>
+                </div>
+                <div v-else-if="mode === 'reparse' && reparsePreview" class="manual-source-panel">
+                  <p class="manual-source-title" :title="reparsePreview.fileName">
+                    {{ reparsePreview.fileName || t('uploadConfirm.reparseSource') }}
+                  </p>
+                  <p class="manual-source-meta">{{ t('uploadConfirm.reparseHint') }}</p>
+                </div>
+              </template>
             </aside>
 
             <main class="main-panel">
@@ -231,6 +301,62 @@
                       @update:graphExtract="handleNodeExtractUpdate"
                     />
                   </div>
+                  <div v-show="activeSection === 'tags'" class="section">
+                    <div class="upload-tags-section">
+                      <div class="upload-tags-heading">
+                        <h4>{{ t('uploadConfirm.tagsSelect') }}</h4>
+                      </div>
+                      <div v-if="selectedTagsList.length > 0" class="upload-tags-selected">
+                        <button
+                          v-for="tag in selectedTagsList"
+                          :key="tag.id"
+                          type="button"
+                          class="upload-tag-chip is-selected"
+                          :title="tag.name"
+                          @click="toggleTag(tag.id)"
+                        >
+                          {{ tag.name }}
+                        </button>
+                      </div>
+                      <div class="upload-tags-search">
+                        <t-input
+                          v-model="tagSearchQuery"
+                          :placeholder="t('uploadConfirm.tagSearch')"
+                          clearable
+                          size="small"
+                        >
+                          <template #prefix-icon>
+                            <t-icon name="search" size="14px" />
+                          </template>
+                        </t-input>
+                      </div>
+                      <div v-if="availableTags.length > 0" class="upload-tags-available">
+                        <button
+                          v-for="tag in availableTags"
+                          :key="tag.id"
+                          type="button"
+                          class="upload-tag-chip"
+                          :title="tag.name"
+                          @click="toggleTag(tag.id)"
+                        >
+                          {{ tag.name }}
+                        </button>
+                      </div>
+                      <div v-else class="upload-tags-empty">
+                        <span>{{ tagSearchQuery.trim() ? t('knowledgeBase.tagEmptyResult') : t('knowledgeBase.noTags') }}</span>
+                        <t-button
+                          v-if="tagSearchQuery.trim() && !isCreatingDuplicate"
+                          variant="text"
+                          theme="default"
+                          size="small"
+                          :loading="creatingTag"
+                          @click="handleCreateTag"
+                        >
+                          {{ t('knowledgeBase.tagCreateAction') }} "{{ tagSearchQuery.trim() }}"
+                        </t-button>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
             </main>
@@ -244,6 +370,29 @@
               {{ confirmButtonText }}
             </t-button>
           </footer>
+
+          <!-- File preview dialog -->
+          <t-dialog
+            v-model:visible="previewDialogVisible"
+            :header="previewFileInfo?.name || ''"
+            width="420px"
+            :footer="false"
+          >
+            <div v-if="previewFileInfo" class="upload-file-preview">
+              <div class="preview-row">
+                <span class="preview-label">{{ t('knowledgeBase.fileName') }}：</span>
+                <span class="preview-value">{{ previewFileInfo.name }}</span>
+              </div>
+              <div class="preview-row">
+                <span class="preview-label">{{ t('knowledgeBase.fileSize') }}：</span>
+                <span class="preview-value">{{ formatFileSize(previewFileInfo.size) }}</span>
+              </div>
+              <div class="preview-row">
+                <span class="preview-label">{{ t('knowledgeBase.fileTypeFilter') }}：</span>
+                <span class="preview-value">{{ previewFileInfo.type || '--' }}</span>
+              </div>
+            </div>
+          </t-dialog>
         </div>
       </div>
     </Transition>
@@ -263,6 +412,7 @@ import { useChatResourcesStore } from '@/stores/chatResources'
 import { useUIStore } from '@/stores/ui'
 import { formatFileSize, getFileIcon } from '@/utils/files'
 import { getUploadFileKey } from '../utils/uploadSources'
+import { listKnowledgeTags, createKnowledgeBaseTag } from '@/api/knowledge-base'
 import KbUploadSourceDropdown from './KbUploadSourceDropdown.vue'
 import type { KnowledgeProcessOverrides } from '@/types/knowledgeProcess'
 import type {
@@ -317,6 +467,7 @@ const props = withDefaults(defineProps<{
   tagId?: string
   acceptFileTypes?: string
   supportedFileTypes?: string[]
+  currentFolderId?: string | null
 }>(), {
   mode: 'file',
   files: () => [],
@@ -325,6 +476,7 @@ const props = withDefaults(defineProps<{
   reparsePreview: null,
   acceptFileTypes: '',
   supportedFileTypes: () => [],
+  currentFolderId: null,
 })
 
 const emit = defineEmits<{
@@ -342,6 +494,15 @@ const localFiles = ref<File[]>([])
 const localUrls = ref<string[]>([])
 const activeSection = ref('overview')
 const uiState = ref<UploadUIState>(createDefaultUIState())
+
+// Tag selection state
+const allTags = ref<Array<{ id: string; name: string }>>([])
+const selectedTagIds = ref<Set<string>>(new Set())
+const tagSearchQuery = ref('')
+const newTagInput = ref('')
+const creatingTag = ref(false)
+// Upload destination: defaults to current KB folder
+const selectedFolderId = ref<string | null>(props.currentFolderId)
 
 const dialogVisible = computed({
   get: () => props.visible,
@@ -404,6 +565,120 @@ function inferMediaExtsFromMarkdown(content: string): string[] {
 const manualCharCount = computed(() => props.manualPreview?.content?.length ?? 0)
 
 const batchItemCount = computed(() => localFiles.value.length + localUrls.value.length)
+
+const isFolderUpload = computed(() => {
+  return localFiles.value.some((f) => {
+    const rp = (f as any).webkitRelativePath as string | undefined
+    return !!rp && rp.includes('/')
+  })
+})
+
+// TDesign Tree data nodes
+interface TdTreeNode {
+  value: string
+  label: string
+  children?: TdTreeNode[]
+  _type: 'folder' | 'file'
+  _name?: string
+  _size?: number
+  _count?: number
+}
+
+const tdTreeData = computed<TdTreeNode[]>(() => {
+  if (!isFolderUpload.value || batchItemCount.value === 0) return []
+
+  // Group files by directory prefix
+  const dirMap = new Map<string, { files: { name: string; size: number }[]; subdirs: Set<string> }>()
+  for (const file of localFiles.value) {
+    const rp = (file as any).webkitRelativePath as string | undefined
+    if (!rp) {
+      const key = '__root__'
+      if (!dirMap.has(key)) dirMap.set(key, { files: [], subdirs: new Set() })
+      dirMap.get(key)!.files.push({ name: file.name, size: file.size })
+      continue
+    }
+    const parts = rp.split('/')
+    const dirKey = parts.slice(0, -1).join('/')
+    if (!dirMap.has(dirKey)) dirMap.set(dirKey, { files: [], subdirs: new Set() })
+    dirMap.get(dirKey)!.files.push({ name: file.name, size: file.size })
+    // Register intermediates
+    for (let i = 1; i < parts.length; i++) {
+      const p = parts.slice(0, i).join('/')
+      if (!dirMap.has(p)) dirMap.set(p, { files: [], subdirs: new Set() })
+      if (i < parts.length - 1) {
+        dirMap.get(p)!.subdirs.add(parts.slice(0, i + 1).join('/'))
+      }
+    }
+  }
+
+  // Build tree nodes
+  const build = (dirKey: string): TdTreeNode[] => {
+    const info = dirMap.get(dirKey)
+    if (!info) return []
+    const nodes: TdTreeNode[] = []
+    for (const childKey of info.subdirs) {
+      const childName = childKey.split('/').pop()!
+      const children = build(childKey)
+      const childInfo = dirMap.get(childKey)
+      const cnt = (childInfo?.files.length || 0) + children.reduce((s, n) => s + (n._count || 0), 0)
+      nodes.push({ value: childKey, label: childName, children, _type: 'folder', _count: cnt })
+    }
+    for (const f of info.files) {
+      nodes.push({ value: `${dirKey}/${f.name}`, label: f.name, _type: 'file', _name: f.name, _size: f.size })
+    }
+    return nodes
+  }
+
+  const topKeys = new Set<string>()
+  for (const file of localFiles.value) {
+    const rp = (file as any).webkitRelativePath as string | undefined
+    topKeys.add(rp ? rp.split('/')[0] : '__root__')
+  }
+  return Array.from(topKeys).flatMap((key) => {
+    if (key === '__root__') {
+      return (dirMap.get('__root__')?.files || []).map((f) => ({
+        value: `__root__/${f.name}`, label: f.name, _type: 'file' as const, _name: f.name, _size: f.size,
+      }))
+    }
+    const children = build(key)
+    const cnt = (dirMap.get(key)?.files.length || 0) + children.reduce((s, n) => s + (n._count || 0), 0)
+    return [{ value: key, label: key, children, _type: 'folder' as const, _count: cnt }]
+  })
+})
+
+// Preview state
+const previewDialogVisible = ref(false)
+const previewFileInfo = ref<{ name: string; size: number; type: string } | null>(null)
+
+const handleTreeFileClick = (node: any) => {
+  const data: TdTreeNode = node.data
+  if (data._type !== 'file') return
+  const file = localFiles.value.find((f) => {
+    const rp = (f as any).webkitRelativePath as string | undefined
+    return (rp && rp === data.value) || (!rp && data.value === `__root__/${f.name}`)
+  })
+  const name = file?.name || data.label
+  const size = file?.size || data._size || 0
+  const ext = name.split('.').pop()?.toLowerCase() || ''
+  previewFileInfo.value = { name, size, type: ext }
+  previewDialogVisible.value = true
+}
+
+const removeTreeFile = (node: any) => {
+  const data: TdTreeNode = node.data
+  if (data._type === 'folder') {
+    localFiles.value = localFiles.value.filter((f) => {
+      const rp = (f as any).webkitRelativePath as string | undefined
+      return !rp || !rp.startsWith(data.value + '/')
+    })
+  } else {
+    const idx = localFiles.value.findIndex((f) => {
+      const rp = (f as any).webkitRelativePath as string | undefined
+      return (rp && rp === data.value) || (!rp && data.value === `__root__/${f.name}`)
+    })
+    if (idx !== -1) localFiles.value = localFiles.value.filter((_, i) => i !== idx)
+  }
+}
 
 const sourcePanelTitle = computed(() => {
   if (props.mode === 'manual') return t('uploadConfirm.manualSource')
@@ -534,6 +809,13 @@ const overviewLines = computed(() => {
           : t('uploadConfirm.statusOn'))
         : t('uploadConfirm.statusOff'),
     },
+    ...(props.mode === 'file' ? [{
+      key: 'tags',
+      title: t('uploadConfirm.tabTags'),
+      value: selectedTagIds.value.size
+        ? t('uploadConfirm.summaryTagCountValue', { count: selectedTagIds.value.size })
+        : t('uploadConfirm.tagsNone'),
+    }] : []),
   ]
 })
 
@@ -544,6 +826,7 @@ const sectionMeta: Record<string, { titleKey: string; descKey?: string }> = {
   asr: { titleKey: 'uploadConfirm.tabAsr', descKey: 'knowledgeEditor.asr.description' },
   question: { titleKey: 'uploadConfirm.tabQuestion', descKey: 'knowledgeEditor.advanced.questionGeneration.description' },
   graph: { titleKey: 'uploadConfirm.tabGraph', descKey: 'graphSettings.description' },
+  tags: { titleKey: 'uploadConfirm.tabTags' },
 }
 
 const currentSectionTitle = computed(() => {
@@ -824,18 +1107,96 @@ async function loadModels() {
   }
 }
 
+async function loadTags() {
+  if (!props.kbInfo?.id) return
+  try {
+    const res: any = await listKnowledgeTags(props.kbInfo.id, { page: 1, page_size: 200 })
+    const pageData = (res?.data || {})
+    const tags = (pageData?.data || []).map((tag: any) => ({
+      id: String(tag.id),
+      name: tag.name,
+    }))
+    allTags.value = tags
+  } catch {
+    allTags.value = []
+  }
+}
+
+function toggleTag(tagId: string) {
+  const next = new Set(selectedTagIds.value)
+  if (next.has(tagId)) {
+    next.delete(tagId)
+  } else {
+    next.add(tagId)
+  }
+  selectedTagIds.value = next
+}
+
+const selectedTagsList = computed(() => {
+  return allTags.value.filter(tag => selectedTagIds.value.has(tag.id))
+})
+
+const availableTags = computed(() => {
+  const query = tagSearchQuery.value.trim().toLowerCase()
+  return allTags.value.filter((tag) => {
+    if (selectedTagIds.value.has(tag.id)) return false
+    if (query && !tag.name.toLowerCase().includes(query)) return false
+    return true
+  })
+})
+
+const isCreatingDuplicate = computed(() => {
+  const name = tagSearchQuery.value.trim().toLowerCase()
+  if (!name) return false
+  return allTags.value.some(tag => tag.name.toLowerCase() === name)
+})
+
+async function handleCreateTag() {
+  if (!props.kbInfo?.id) return
+  const name = tagSearchQuery.value.trim()
+  if (!name) return
+  // If a same-name tag already exists, just select it instead of creating a duplicate
+  const existing = allTags.value.find(tag => tag.name.toLowerCase() === name.toLowerCase())
+  if (existing) {
+    const next = new Set(selectedTagIds.value)
+    next.add(existing.id)
+    selectedTagIds.value = next
+    tagSearchQuery.value = ''
+    return
+  }
+  creatingTag.value = true
+  try {
+    const res: any = await createKnowledgeBaseTag(props.kbInfo.id, { name })
+    const newTag = res?.data || res
+    allTags.value = [...allTags.value, { id: String(newTag.id), name: newTag.name }]
+    const next = new Set(selectedTagIds.value)
+    next.add(String(newTag.id))
+    selectedTagIds.value = next
+    tagSearchQuery.value = ''
+    MessagePlugin.success(t('knowledgeBase.tagCreateSuccess'))
+  } catch (error: any) {
+    MessagePlugin.error(error?.message || t('common.operationFailed'))
+  } finally {
+    creatingTag.value = false
+  }
+}
+
 watch(
   () => props.visible,
   (visible) => {
     if (!visible) return
     localFiles.value = props.mode === 'file' ? [...(props.files || [])] : []
     localUrls.value = props.mode === 'file' ? [...(props.urls || [])] : []
+    selectedFolderId.value = props.currentFolderId
     initFromKbInfo(props.kbInfo)
     if (props.mode === 'reparse') {
       applyOverridesToState(props.reparsePreview?.processOverrides)
     }
     activeSection.value = 'overview'
+    selectedTagIds.value = new Set()
+    tagSearchQuery.value = ''
     loadModels()
+    loadTags()
   },
 )
 
@@ -947,16 +1308,19 @@ const handleConfirm = () => {
   if (!validateBeforeConfirm()) return
 
   const processConfig = buildProcessOverrides()
+  const tagIds = selectedTagIds.value.size > 0 ? [...selectedTagIds.value] : undefined
   if (props.mode === 'manual' && props.manualPreview) {
-    emit('confirm', { processConfig, mode: 'manual', manual: { ...props.manualPreview } })
+    emit('confirm', { processConfig, mode: 'manual', tagIds, manual: { ...props.manualPreview } })
   } else if (props.mode === 'reparse' && props.reparsePreview) {
-    emit('confirm', { processConfig, mode: 'reparse', reparse: { ...props.reparsePreview } })
+    emit('confirm', { processConfig, mode: 'reparse', tagIds, reparse: { ...props.reparsePreview } })
   } else {
     emit('confirm', {
       processConfig,
       mode: 'file',
+      tagIds,
       files: [...localFiles.value],
       urls: [...localUrls.value],
+      folderId: selectedFolderId.value,
     })
   }
   emit('update:visible', false)
@@ -1022,6 +1386,10 @@ const handleConfirm = () => {
   width: 220px;
   border-right: 1px solid var(--td-component-stroke);
   background: var(--td-bg-color-settings-modal, var(--td-bg-color-secondarycontainer));
+
+  &--wide {
+    width: 300px;
+  }
 }
 
 .files-panel-header {
@@ -1030,12 +1398,6 @@ const handleConfirm = () => {
   justify-content: space-between;
   gap: 8px;
   padding: 20px 16px 12px;
-}
-
-.files-panel-actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
   flex-shrink: 0;
 }
 
@@ -1044,6 +1406,38 @@ const handleConfirm = () => {
   font-size: 13px;
   font-weight: 600;
   color: var(--td-text-color-primary);
+}
+
+/* ---- File list section ---- */
+.file-list-section {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.file-list-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px 6px;
+  flex-shrink: 0;
+}
+
+.file-list-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--td-text-color-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.file-list-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
 }
 
 .files-count {
@@ -1112,6 +1506,94 @@ const handleConfirm = () => {
   font-size: 13px;
   color: var(--td-text-color-secondary);
   text-align: center;
+}
+
+/* ---- Folder upload tree (TDesign Tree) ---- */
+.folder-upload-tree {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 0;
+
+  :deep(.t-tree__item) {
+    padding-right: 4px;
+  }
+
+  :deep(.t-tree__label) {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .td-tree-label-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .td-tree-node-icon {
+    flex-shrink: 0;
+
+    &.folder-icon {
+      color: var(--td-warning-color);
+    }
+    &.file-icon {
+      color: var(--td-brand-color);
+    }
+  }
+
+  .td-tree-node-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 13px;
+    cursor: default;
+  }
+
+  .td-tree-node-meta {
+    flex-shrink: 0;
+    font-size: 11px;
+    color: var(--td-text-color-placeholder);
+  }
+
+  .td-tree-node-actions {
+    display: flex;
+    flex-shrink: 0;
+    opacity: 0;
+    transition: opacity 0.12s;
+  }
+
+  :deep(.t-tree__item:hover) .td-tree-node-actions {
+    opacity: 1;
+  }
+}
+
+/* ---- Upload file preview dialog ---- */
+.upload-file-preview {
+  .preview-row {
+    display: flex;
+    align-items: center;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--td-component-stroke);
+
+    &:last-child {
+      border-bottom: none;
+    }
+  }
+
+  .preview-label {
+    flex-shrink: 0;
+    width: 80px;
+    font-size: 13px;
+    color: var(--td-text-color-secondary);
+  }
+
+  .preview-value {
+    font-size: 13px;
+    color: var(--td-text-color-primary);
+    word-break: break-all;
+  }
 }
 
 .manual-source-panel {
@@ -1360,5 +1842,70 @@ const handleConfirm = () => {
 .modal-enter-from,
 .modal-leave-to {
   opacity: 0;
+}
+
+.upload-tags-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.upload-tags-heading {
+  h4 {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--td-text-color-primary);
+  }
+}
+
+.upload-tags-selected,
+.upload-tags-available {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.upload-tag-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 10px;
+  border: 1px solid var(--td-component-stroke);
+  border-radius: 4px;
+  background: var(--td-bg-color-container);
+  color: var(--td-text-color-secondary);
+  font-size: 12px;
+  line-height: 24px;
+  cursor: pointer;
+  outline: none;
+  white-space: nowrap;
+  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+
+  &:hover {
+    border-color: var(--td-component-stroke);
+    background: var(--td-bg-color-secondarycontainer);
+    color: var(--td-text-color-primary);
+  }
+
+  &.is-selected {
+    border-color: transparent;
+    background: var(--td-bg-color-secondarycontainer);
+    color: var(--td-text-color-primary);
+    font-weight: 500;
+  }
+}
+
+.upload-tags-search {
+  max-width: 320px;
+}
+
+.upload-tags-empty {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  font-size: 13px;
+  color: var(--td-text-color-placeholder);
 }
 </style>

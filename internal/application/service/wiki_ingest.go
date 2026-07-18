@@ -935,7 +935,13 @@ func (s *wikiIngestService) trimPendingList(ctx context.Context, ids []int64) er
 	if s.pendingRepo == nil || len(ids) == 0 {
 		return nil
 	}
-	if err := s.pendingRepo.DeleteByIDs(ctx, ids); err != nil {
+	// Detached context: the batch ctx may be cancelled by asynq timeout or
+	// graceful shutdown, but the successful ops MUST be removed from the
+	// queue — otherwise they re-enter the next batch. Same pattern as
+	// finalizeWikiSubtask's detached ctx.
+	dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), finalizeSubtaskDetachedTimeout)
+	defer cancel()
+	if err := s.pendingRepo.DeleteByIDs(dctx, ids); err != nil {
 		logger.Warnf(ctx, "wiki ingest: failed to trim %d pending rows: %v", len(ids), err)
 		return err
 	}
@@ -980,13 +986,20 @@ func (s *wikiIngestService) requeueFailedOps(ctx context.Context, payload WikiIn
 		return nil
 	}
 	var settleErrs []error
+	// Detached context: the batch ctx may be cancelled by asynq timeout or
+	// graceful shutdown. All failure-path DB writes MUST succeed — without
+	// IncrFailCount, fail_count never increments and the op never reaches
+	// the dead-letter budget, causing infinite re-claim. Same pattern as
+	// finalizeWikiSubtask's detached ctx.
+	dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), finalizeSubtaskDetachedTimeout)
+	defer cancel()
 	for _, op := range ops {
 		if op.dbID == 0 {
 			// Op was never persisted (synthetic / test) — nothing to
 			// retry against.
 			continue
 		}
-		count, err := s.pendingRepo.IncrFailCount(ctx, op.dbID)
+		count, err := s.pendingRepo.IncrFailCount(dctx, op.dbID)
 		if err != nil {
 			logger.Warnf(ctx, "wiki ingest: failed to increment fail count for %s (id=%d): %v", op.KnowledgeID, op.dbID, err)
 			settleErrs = append(settleErrs, fmt.Errorf("increment fail count id=%d: %w", op.dbID, err))
@@ -1001,7 +1014,7 @@ func (s *wikiIngestService) requeueFailedOps(ctx context.Context, payload WikiIn
 			// wikiClaimStaleAfter. No-op in Lite mode (row was peeked, never
 			// claimed). ReleaseByIDs preserves fail_count, so the retry
 			// budget still counts down.
-			if err := s.pendingRepo.ReleaseByIDs(ctx, []int64{op.dbID}); err != nil {
+			if err := s.pendingRepo.ReleaseByIDs(dctx, []int64{op.dbID}); err != nil {
 				logger.Warnf(ctx, "wiki ingest: failed to release claim for retry id=%d: %v", op.dbID, err)
 				settleErrs = append(settleErrs, fmt.Errorf("release retry claim id=%d: %w", op.dbID, err))
 			}
@@ -1020,7 +1033,7 @@ func (s *wikiIngestService) requeueFailedOps(ctx context.Context, payload WikiIn
 		logger.Warnf(ctx, "wiki ingest: dropping op %s (%s) after %d failures (limit %d)", op.KnowledgeID, op.DocTitle, count, wikiMaxFailRetries)
 		if s.deadLetterRepo != nil {
 			payloadBytes, _ := json.Marshal(op)
-			if dlErr := s.deadLetterRepo.Insert(ctx, &types.TaskDeadLetter{
+			if dlErr := s.deadLetterRepo.Insert(dctx, &types.TaskDeadLetter{
 				TenantID:  payload.TenantID,
 				TaskType:  wikiTaskType,
 				Scope:     wikiTaskScope,
@@ -1034,7 +1047,7 @@ func (s *wikiIngestService) requeueFailedOps(ctx context.Context, payload WikiIn
 				settleErrs = append(settleErrs, fmt.Errorf("archive dead letter id=%d: %w", op.dbID, dlErr))
 			}
 		}
-		if err := s.pendingRepo.DeleteByIDs(ctx, []int64{op.dbID}); err != nil {
+		if err := s.pendingRepo.DeleteByIDs(dctx, []int64{op.dbID}); err != nil {
 			logger.Warnf(ctx, "wiki ingest: failed to drop dead-lettered row id=%d: %v", op.dbID, err)
 			settleErrs = append(settleErrs, fmt.Errorf("drop dead-lettered row id=%d: %w", op.dbID, err))
 		}
@@ -2362,12 +2375,18 @@ func isTransientLLMError(ctx context.Context, err error) bool {
 
 // --- Helpers ---
 
-// isKnowledgeGone returns true if the given knowledge has been deleted or is
-// in the middle of being deleted. It first consults the Redis tombstone
-// (written by cleanupWikiOnKnowledgeDelete) as a fast path, then falls back
-// to the DB. A nil result from GetKnowledgeByIDOnly also counts as gone: the
-// repo layer uses GORM First() which filters soft-deleted rows, so a
-// soft-deleted knowledge surfaces as "not found" here — exactly what we want.
+// isKnowledgeGone returns true if the given knowledge has been deleted, is
+// in the middle of being deleted, or has been marked as failed by the
+// housekeeping sweep. It first consults the Redis tombstone (written by
+// cleanupWikiOnKnowledgeDelete) as a fast path, then falls back to the DB.
+// A nil result from GetKnowledgeByIDOnly also counts as gone: the repo
+// layer uses GORM First() which filters soft-deleted rows, so a soft-deleted
+// knowledge surfaces as "not found" here — exactly what we want.
+//
+// ParseStatusFailed is treated as terminal: a failed knowledge has
+// incomplete or missing chunks, so running wiki extraction on it produces
+// garbage. The only way out is re-parse, which re-enqueues a fresh op after
+// scrubbing stale ones (see prepareWikiForReparse).
 func (s *wikiIngestService) isKnowledgeGone(ctx context.Context, kbID, knowledgeID string) bool {
 	if knowledgeID == "" {
 		return true
@@ -2382,7 +2401,7 @@ func (s *wikiIngestService) isKnowledgeGone(ctx context.Context, kbID, knowledge
 		return true
 	}
 	switch kn.ParseStatus {
-	case types.ParseStatusDeleting, types.ParseStatusCancelled:
+	case types.ParseStatusDeleting, types.ParseStatusCancelled, types.ParseStatusFailed:
 		return true
 	}
 	return false

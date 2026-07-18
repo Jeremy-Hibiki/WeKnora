@@ -320,6 +320,101 @@ export async function listSystemAdmins(
   return response as unknown as ListSystemAdminsResponse
 }
 
+// ---- User Management (SystemAdmin) ----
+//
+// CRUD over the platform's user roster — list/search, create,
+// enable/disable, reset password. All endpoints inherit the
+// SystemAdmin guard from the route group. Same response convention
+// as the system-admin functions above: the axios interceptor unwraps
+// response.data, so the resolved value IS the typed payload.
+
+/** A platform user as returned by the admin users API (types.UserInfo). */
+export interface AdminUser {
+  id: string
+  username: string
+  email: string
+  avatar?: string
+  tenant_id: number
+  is_active: boolean
+  can_access_all_tenants: boolean
+  is_system_admin: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface ListUsersResponse {
+  total: number
+  users: AdminUser[]
+}
+
+export interface ListUsersParams {
+  /** Substring filter on username / email (case-insensitive). */
+  search?: string
+  offset?: number
+  limit?: number
+}
+
+/**
+ * List platform users with optional search and pagination.
+ * Returns {total, users[]} directly — no {data: ...} wrapping.
+ */
+export async function listUsers(
+  params?: ListUsersParams,
+): Promise<ListUsersResponse> {
+  const qs = new URLSearchParams()
+  if (params?.search) qs.set('search', params.search)
+  if (params?.offset != null) qs.set('offset', String(params.offset))
+  if (params?.limit != null) qs.set('limit', String(params.limit))
+  const suffix = qs.toString() ? `?${qs.toString()}` : ''
+  const response = await get(`/api/v1/system/admin/users${suffix}`)
+  return response as unknown as ListUsersResponse
+}
+
+export interface AdminCreateUserRequest {
+  username: string
+  email: string
+  password: string
+}
+
+/**
+ * Create a new user on behalf of a system administrator. The new user
+ * gets a default workspace; no login tokens are returned.
+ */
+export async function adminCreateUser(
+  req: AdminCreateUserRequest,
+): Promise<AdminUser> {
+  const response = await post('/api/v1/system/admin/users', req)
+  return response as unknown as AdminUser
+}
+
+/**
+ * Enable or disable a user. Disabling revokes the user's outstanding
+ * sessions server-side. The caller cannot disable themselves.
+ */
+export async function setUserActive(
+  userId: string,
+  isActive: boolean,
+): Promise<AdminUser> {
+  const response = await put(
+    `/api/v1/system/admin/users/${encodeURIComponent(userId)}/status`,
+    { is_active: isActive },
+  )
+  return response as unknown as AdminUser
+}
+
+/**
+ * Reset a user's password without the old password (SystemAdmin
+ * authorisation). Revokes the user's outstanding sessions server-side.
+ */
+export async function adminResetPassword(
+  userId: string,
+  newPassword: string,
+): Promise<void> {
+  await post(
+    `/api/v1/system/admin/users/${encodeURIComponent(userId)}/reset-password`,
+    { new_password: newPassword },
+  )
+}
 export interface ResetUserPasswordRequest {
   email: string
   new_password: string

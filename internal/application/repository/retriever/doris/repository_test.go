@@ -273,8 +273,8 @@ func TestVectorRetrieve_SQLShape(t *testing.T) {
 			sqlmock.NewRows([]string{
 				"id", "content", "source_id", "source_type",
 				"chunk_id", "knowledge_id", "knowledge_base_id", "tag_id",
-				"is_enabled", "score",
-			}).AddRow("id1", "hello", "src", 0, "c1", "k1", "kb1", "t1", true, 0.95),
+				"folder_id", "is_enabled", "score",
+			}).AddRow("id1", "hello", "src", 0, "c1", "k1", "kb1", "t1", "", true, 0.95),
 		)
 
 	results, err := repo.VectorRetrieve(context.Background(), types.RetrieveParams{
@@ -306,8 +306,8 @@ func TestVectorRetrieve_SQLShape_LegacyMode(t *testing.T) {
 			sqlmock.NewRows([]string{
 				"id", "content", "source_id", "source_type",
 				"chunk_id", "knowledge_id", "knowledge_base_id", "tag_id",
-				"is_enabled", "score",
-			}).AddRow("id1", "hello", "src", 0, "c1", "k1", "kb1", "t1", true, 0.8),
+				"folder_id", "is_enabled", "score",
+			}).AddRow("id1", "hello", "src", 0, "c1", "k1", "kb1", "t1", "", true, 0.8),
 		)
 
 	results, err := repo.VectorRetrieve(context.Background(), types.RetrieveParams{
@@ -355,8 +355,8 @@ func TestKeywordsRetrieve_SQLShape(t *testing.T) {
 			sqlmock.NewRows([]string{
 				"id", "content", "source_id", "source_type",
 				"chunk_id", "knowledge_id", "knowledge_base_id", "tag_id",
-				"is_enabled",
-			}).AddRow("id1", "你好世界", "src", 0, "c1", "k1", "kb1", "", true),
+				"folder_id", "is_enabled",
+			}).AddRow("id1", "你好世界", "src", 0, "c1", "k1", "kb1", "", "", true),
 		)
 
 	results, err := repo.KeywordsRetrieve(context.Background(), types.RetrieveParams{
@@ -387,18 +387,18 @@ func TestBatchUpdateChunkEnabledStatus_RewritesRows(t *testing.T) {
 	mock.ExpectQuery(`SELECT TABLE_NAME FROM information_schema.tables`).
 		WithArgs("weknora", "weknora_embeddings\\_%").
 		WillReturnRows(sqlmock.NewRows([]string{"TABLE_NAME"}).AddRow("weknora_embeddings_768"))
-	mock.ExpectQuery(`SELECT id, content, source_id, source_type, chunk_id, knowledge_id, knowledge_base_id, tag_id, is_enabled, embedding FROM .*weknora_embeddings_768.* WHERE chunk_id IN`).
+	mock.ExpectQuery(`SELECT id, content, source_id, source_type, chunk_id, knowledge_id, knowledge_base_id, tag_id, folder_id, is_enabled, embedding FROM .*weknora_embeddings_768.* WHERE chunk_id IN`).
 		WithArgs("c1").
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "content", "source_id", "source_type",
 			"chunk_id", "knowledge_id", "knowledge_base_id", "tag_id",
-			"is_enabled", "embedding",
-		}).AddRow("row-1", "hello", "src1", 0, "c1", "k1", "kb1", "t1", true, "[1,2,3]"))
+			"folder_id", "is_enabled", "embedding",
+		}).AddRow("row-1", "hello", "src1", 0, "c1", "k1", "kb1", "t1", "", true, "[1,2,3]"))
 	mock.ExpectExec(`DELETE FROM .*weknora_embeddings_768.* WHERE id IN \(\?\)`).
 		WithArgs("row-1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec(`INSERT INTO .*weknora_embeddings_768.*VALUES \(\?, \?, \?, \?, \?, \?, \?, \?, \?, \[`).
-		WithArgs("row-1", "hello", "src1", 0, "c1", "k1", "kb1", "t1", false).
+	mock.ExpectExec(`INSERT INTO .*weknora_embeddings_768.*VALUES \(\?, \?, \?, \?, \?, \?, \?, \?, \?, \?, \[`).
+		WithArgs("row-1", "hello", "src1", 0, "c1", "k1", "kb1", "t1", "", false).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	require.NoError(t, repo.BatchUpdateChunkEnabledStatus(
@@ -505,11 +505,11 @@ func TestBatchSave_SQLShape(t *testing.T) {
 	mock.ExpectExec(`DELETE FROM .*weknora_embeddings_3.* WHERE id IN \(\?\)`).
 		WithArgs("src1").
 		WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectExec(`INSERT INTO .*weknora_embeddings_3.*VALUES \(\?, \?, \?, \?, \?, \?, \?, \?, \?, \[`).
+	mock.ExpectExec(`INSERT INTO .*weknora_embeddings_3.*VALUES \(\?, \?, \?, \?, \?, \?, \?, \?, \?, \?, \[`).
 		WithArgs(
 			"src1", "hello", "src1", 0,
 			"c1", "k1", "kb1", "",
-			true,
+			"", true,
 		).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
@@ -545,11 +545,11 @@ func TestBatchSave_SQLShape_LegacyMode(t *testing.T) {
 	primeCompatMode(repo, dorisCompatModeLegacy, nil)
 	repo.initializedTables.Store(3, true)
 
-	mock.ExpectExec(`INSERT INTO .*weknora_embeddings_3.*VALUES \(\?, \?, \?, \?, \?, \?, \?, \?, \?, \[`).
+	mock.ExpectExec(`INSERT INTO .*weknora_embeddings_3.*VALUES \(\?, \?, \?, \?, \?, \?, \?, \?, \?, \?, \[`).
 		WithArgs(
 			"src1", "hello", "src1", 0,
 			"c1", "k1", "kb1", "",
-			true,
+			"", true,
 		).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 

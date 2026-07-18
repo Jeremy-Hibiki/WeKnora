@@ -44,6 +44,11 @@ type SearchTarget struct {
 	// user-selected scope. The reranker still orders candidates, but vector and
 	// keyword thresholds cannot erase the whole explicit scope before reranking.
 	DisableRecallThresholds bool `json:"disable_recall_thresholds,omitempty"`
+	// FolderIDs restricts retrieval to knowledge entries in the specified folders.
+	FolderIDs []string `json:"folder_ids,omitempty"`
+	// IncludeSubfolders, when true alongside non-empty FolderIDs, includes
+	// knowledge entries from all descendant subfolders.
+	IncludeSubfolders bool `json:"include_subfolders,omitempty"`
 }
 
 // SearchTargets is a list of search targets, pre-computed at request entry point
@@ -182,6 +187,11 @@ type SearchResult struct {
 
 	// KnowledgeBaseID is the ID of the knowledge base this result belongs to
 	KnowledgeBaseID string `json:"knowledge_base_id,omitempty"`
+
+	// FolderID is the folder this knowledge entry belongs to (nil/empty = root)
+	FolderID *string `json:"folder_id,omitempty"`
+	// FolderPath is the human-readable path of the folder (e.g. /Guides/Go/API)
+	FolderPath string `json:"folder_path,omitempty"`
 }
 
 // SearchParams represents the search parameters
@@ -205,6 +215,11 @@ type SearchParams struct {
 	// in processSearchResults. Used by the chat pipeline where context assembly
 	// is handled separately in the merge stage.
 	SkipContextEnrichment bool `json:"skip_context_enrichment,omitempty"`
+	// FolderIDs restricts retrieval to knowledge entries in the specified folders.
+	FolderIDs []string `json:"folder_ids,omitempty"`
+	// IncludeSubfolders, when true alongside non-empty FolderIDs, includes
+	// knowledge entries from all descendant subfolders.
+	IncludeSubfolders bool `json:"include_subfolders,omitempty"`
 }
 
 // Value implements the driver.Valuer interface, used to convert SearchResult to database value

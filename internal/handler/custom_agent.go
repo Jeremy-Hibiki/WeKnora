@@ -608,6 +608,16 @@ func (h *CustomAgentHandler) GetSuggestedQuestions(c *gin.Context) {
 		}
 	}
 
+	var folderIDs []string
+	if folderIDsStr := strings.TrimSpace(c.Query("folder_ids")); folderIDsStr != "" {
+		for _, id := range strings.Split(folderIDsStr, ",") {
+			if trimmed := strings.TrimSpace(id); trimmed != "" {
+				folderIDs = append(folderIDs, trimmed)
+			}
+		}
+	}
+	includeSubfolders := c.Query("include_subfolders") == "true"
+
 	limit := 6
 	if limitStr := c.Query("limit"); limitStr != "" {
 		if parsed, err := strconv.Atoi(limitStr); err == nil && parsed > 0 {
@@ -615,10 +625,10 @@ func (h *CustomAgentHandler) GetSuggestedQuestions(c *gin.Context) {
 		}
 	}
 
-	logger.Infof(ctx, "Getting suggested questions for agent %s, kbIDs: %v, tagScopes: %d, limit: %d",
-		secutils.SanitizeForLog(id), kbIDs, len(tagScopes), limit)
+	logger.Infof(ctx, "Getting suggested questions for agent %s, kbIDs: %v, tagScopes: %d, folderIDs: %v, limit: %d",
+		secutils.SanitizeForLog(id), kbIDs, len(tagScopes), folderIDs, limit)
 
-	questions, err := h.service.GetSuggestedQuestions(ctx, id, kbIDs, knowledgeIDs, tagScopes, limit)
+	questions, err := h.service.GetSuggestedQuestions(ctx, id, kbIDs, knowledgeIDs, tagScopes, folderIDs, includeSubfolders, limit)
 	if err != nil {
 		logger.ErrorWithFields(ctx, err, map[string]interface{}{
 			"agent_id": id,

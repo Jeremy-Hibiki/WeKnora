@@ -126,6 +126,20 @@ func (c *CompositeRetrieveEngine) BatchUpdateChunkTagID(
 	})
 }
 
+// BatchUpdateFolderID updates the folder_id metadata of all chunks belonging to
+// the given knowledge entries across all registered engines.
+func (c *CompositeRetrieveEngine) BatchUpdateFolderID(
+	ctx context.Context,
+	knowledgeFolderMap map[string]string,
+) error {
+	return c.concurrentExecWithError(ctx, func(ctx context.Context, engineInfo *engineInfo) error {
+		if err := engineInfo.retrieveEngine.BatchUpdateFolderID(ctx, knowledgeFolderMap); err != nil {
+			return err
+		}
+		return nil
+	})
+}
+
 // concurrentRetrieve is a helper function for concurrent processing of retrieval parameters
 // and collecting results
 func concurrentRetrieve(

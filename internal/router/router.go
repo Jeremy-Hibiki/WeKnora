@@ -49,6 +49,7 @@ type RouterParams struct {
 	AgentShareService            interfaces.AgentShareService
 	KBHandler                    *handler.KnowledgeBaseHandler
 	KnowledgeHandler             *handler.KnowledgeHandler
+	KnowledgeFolderHandler       *handler.KnowledgeFolderHandler
 	TenantHandler                *handler.TenantHandler
 	TenantService                interfaces.TenantService
 	TenantAPIKeyService          interfaces.TenantAPIKeyService
@@ -133,7 +134,8 @@ func NewRouter(params RouterParams) *gin.Engine {
 	// Swagger API 文档（仅在非生产环境下启用）
 	// 通过 GIN_MODE 环境变量判断：release 模式下禁用 Swagger
 	if gin.Mode() != gin.ReleaseMode {
-		r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler,
+		r.GET("/swagger/*any", ginSwagger.WrapHandler(
+			swaggerFiles.Handler,
 			ginSwagger.DefaultModelsExpandDepth(-1), // 默认折叠 Models
 			ginSwagger.DocExpansion("list"),         // 展开模式: "list"(展开标签), "full"(全部展开), "none"(全部折叠)
 			ginSwagger.DeepLinking(true),            // 启用深度链接
@@ -242,6 +244,7 @@ func NewRouter(params RouterParams) *gin.Engine {
 			params.ResourceCatalog,
 		)
 		RegisterKnowledgeTagRoutes(v1, params.TagHandler, rbacGuards)
+		RegisterKnowledgeFolderRoutes(v1, params.KnowledgeFolderHandler, rbacGuards)
 		RegisterKnowledgeRoutes(v1, params.KnowledgeHandler, rbacGuards)
 		RegisterFAQRoutes(v1, params.FAQHandler, rbacGuards)
 		RegisterChunkRoutes(v1, params.ChunkHandler, rbacGuards)
@@ -253,6 +256,13 @@ func NewRouter(params RouterParams) *gin.Engine {
 		RegisterInitializationRoutes(v1, params.InitializationHandler, rbacGuards)
 		RegisterSystemRoutes(v1, params.SystemHandler, rbacGuards)
 		RegisterSystemAdminRoutes(v1, params.SystemHandler, params.AuditLogHandler, rbacGuards)
+
+		// Platform-wide admin maintenance (SystemAdmin only). These span
+		// all tenants, so they live outside the per-tenant RBAC matrix.
+		adminMaintenance := v1.Group("/admin", rbacGuards.SystemAdmin())
+		{
+			adminMaintenance.POST("/vector-stores/backfill-folder-metadata", params.KnowledgeHandler.BackfillFolderMetadata)
+		}
 		RegisterMCPServiceRoutes(v1, params.MCPServiceHandler, params.MCPCredentialsHandler, params.MCPOAuthHandler, rbacGuards)
 		RegisterWebSearchRoutes(v1, params.WebSearchHandler, rbacGuards)
 		RegisterWebSearchProviderRoutes(v1, params.WebSearchProviderHandler, params.WebSearchCredentialsHandler, rbacGuards)
@@ -341,6 +351,9 @@ func RegisterKnowledgeRoutes(r *gin.RouterGroup, handler *handler.KnowledgeHandl
 		kb.POST("/url", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), handler.CreateKnowledgeFromURL)
 		kb.POST("/manual", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), handler.CreateManualKnowledge)
 		kbRead.GET("", g.Viewer(), g.KBAccessRead("id"), handler.ListKnowledge)
+		// Folder / zip uploads reconstruct the directory tree automatically.
+		kb.POST("/folder", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), handler.UploadFolder)
+		kb.POST("/zip", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), handler.UploadZip)
 		// Clearing all contents under a KB is a destructive op; gate
 		// behind Admin instead of Contributor.
 		kb.With(apiKeyFullAccess()).DELETE("", g.Admin(), g.KBAccessWrite("id"), handler.ClearKnowledgeBaseContents)
@@ -377,6 +390,10 @@ func RegisterKnowledgeRoutes(r *gin.RouterGroup, handler *handler.KnowledgeHandl
 		kgrp.POST("/batch-reparse", g.Contributor(), handler.BatchReparseKnowledge)
 		kgrp.POST("/batch-delete", g.Contributor(), handler.BatchDeleteKnowledge)
 		kgrp.POST("/move", g.Contributor(), handler.MoveKnowledge)
+
+		// Folder operations for knowledge entries
+		kgrp.PUT("/:id/folder", g.OwnedKnowledgeKBOrAdmin(), g.KBAccessWriteFromKnowledgeIDParam("id"), handler.MoveKnowledgeToFolder)
+		kgrp.POST("/batch-move-folder", g.Contributor(), handler.BatchMoveKnowledgeToFolder)
 	}
 }
 
@@ -583,6 +600,7 @@ func RegisterSessionRoutes(
 		sessions.DELETE("/:id/pin", handler.UnpinSession)
 		// 继续接收活跃流
 		sessions.GET("/continue-stream/:session_id", handler.ContinueStream)
+
 		if suggestionHandler != nil {
 			// Gin requires wildcard names to be identical within the same HTTP-method
 			// radix tree. Existing GET session routes use :id, so keep that name here.
@@ -617,7 +635,7 @@ func RegisterChatRoutes(r *gin.RouterGroup, handler *session.Handler, g *rbacGua
 	}
 }
 
-// RegisterTenantRoutes 注册空间相关的路由
+// RegisterTenantRoutes 注册租户相关的路由
 //
 // Tenant-internal RBAC for /tenants/:id:
 //   - GET   /:id          Viewer+ (read tenant settings)
@@ -661,17 +679,17 @@ func RegisterTenantRoutes(
 	r.GET("/tenants/all", g.CrossTenant(), handler.ListAllTenants)
 	r.GET("/tenants/search", g.CrossTenant(), handler.SearchTenants)
 
-	// 空间路由组
+	// 租户路由组
 	tenantRoutes := r.Group("/tenants")
 	{
-		// 创建空间对所有已登录用户开放：用户可以为自己再开一个工作区，
-		// handler 内部会调 EnsureOwner 把调用者写成新空间的 Owner。
-		// 跨空间超管走同一个端点，但能携带 storage_quota / status 等
+		// 创建租户对所有已登录用户开放：用户可以为自己再开一个工作区，
+		// handler 内部会调 EnsureOwner 把调用者写成新租户的 Owner。
+		// 跨租户超管走同一个端点，但能携带 storage_quota / status 等
 		// 全字段（见 handler.CreateTenant 内部分支）。
 		// 安全说明：这里不挂 g.CrossTenant()，因为 self-service 创建
-		// 不需要跨空间特权；handler 也不读写 X-Tenant-ID 指向的现有
-		// 空间，所以越过 PathTenantMatch 守卫不会扩大攻击面。
-		// 创建空间不对 API key 开放（注册在原始 group，默认拒绝）。
+		// 不需要跨租户特权；handler 也不读写 X-Tenant-ID 指向的现有
+		// 租户，所以越过 PathTenantMatch 守卫不会扩大攻击面。
+		// 创建租户不对 API key 开放（注册在原始 group，默认拒绝）。
 		tenantRoutes.POST("", handler.CreateTenant)
 		g.apiKeyRoute(tenantRoutes, http.MethodGet, "", apiKeyManageTenantSettings(apiKeyFullAccess()), handler.ListTenants)
 
@@ -755,7 +773,7 @@ func RegisterModelRoutes(
 	credHandler *handler.ModelCredentialsHandler,
 	g *rbacGuards,
 ) {
-	// 模型路由组。空间级基础设施：仅完全访问（Owner）API key 可访问。
+	// 模型路由组。租户级基础设施：仅完全访问（Owner）API key 可访问。
 	models := g.apiKeyGroup(r.Group("/models"), apiKeyManageModels(apiKeyFullAccess()))
 	{
 		// 获取模型厂商列表 — Viewer+
@@ -859,8 +877,8 @@ func RegisterInitializationRoutes(r *gin.RouterGroup, handler *handler.Initializ
 		apiKeyManageKnowledgeBases(apiKeyFullAccess()), g.OwnedKBOrAdminFromKbIDParam(), g.KBAccessWrite("kbId"), handler.UpdateKBConfig)
 
 	// Ollama / 远程 API / 抽取等系统级检测/下载操作。这些不绑某个 KB，
-	// 会改空间级模型配置或拉远端模型；JWT 侧只读探测 Viewer+、变更 Admin+。
-	// 对 API key 均为空间级：full-access key 可用，scoped key 需要 manage_models。
+	// 会改租户级模型配置或拉远端模型；JWT 侧只读探测 Viewer+、变更 Admin+。
+	// 对 API key 均为租户级：full-access key 可用，scoped key 需要 manage_models。
 	g.apiKeyRoute(r, http.MethodGet, "/initialization/ollama/status", apiKeyManageModels(apiKeyFullAccess()), g.Viewer(), handler.CheckOllamaStatus)
 	g.apiKeyRoute(r, http.MethodGet, "/initialization/ollama/models", apiKeyManageModels(apiKeyFullAccess()), g.Viewer(), handler.ListOllamaModels)
 	g.apiKeyRoute(r, http.MethodPost, "/initialization/ollama/models/check", apiKeyManageModels(apiKeyFullAccess()), g.Admin(), handler.CheckOllamaModels)
@@ -938,6 +956,16 @@ func RegisterSystemAdminRoutes(
 		adminRoutes.POST("/revoke", handler.RevokeSystemAdmin)
 		adminRoutes.GET("/list", handler.ListSystemAdmins)
 		adminRoutes.POST("/users/reset-password", handler.ResetUserPassword)
+
+		// User management (SystemAdmin). CRUD over the platform's user
+		// roster — list/search, create, enable/disable, reset password.
+		// All inherit the group's SystemAdmin guard. Same response
+		// convention (raw model, no {data:...} wrapping) as the settings
+		// endpoints below.
+		adminRoutes.GET("/users", handler.ListUsers)
+		adminRoutes.POST("/users", handler.AdminCreateUser)
+		adminRoutes.PUT("/users/:id/status", handler.UpdateUserStatus)
+		adminRoutes.POST("/users/:id/reset-password", handler.AdminResetPassword)
 
 		// P1: platform-wide system settings (DB-backed runtime tunables).
 		// Reads return raw model rows / arrays (no `gin.H{"data":...}`
@@ -1270,10 +1298,10 @@ func RegisterOrganizationRoutes(r *gin.RouterGroup, orgHandler *handler.Organiza
 
 	// Knowledge base sharing routes (add to existing kb routes).
 	// 分享 KB 到组织 = 让组织里所有人能读这个 KB；这跟"修改 KB 元信息"
-	// 同等敏感，所以挂同款 OwnedKBOrAdmin 矩阵。Viewer 在自己空间里
+	// 同等敏感，所以挂同款 OwnedKBOrAdmin 矩阵。Viewer 在自己租户里
 	// 也不能私自把 KB 暴露出去。
 	// 分享管理不通过 capability 授予（manage_spaces 也不含）；仅 full-access
-	// key（空间级全权）可管理分享，scoped key 保持 default-deny。
+	// key（租户级全权）可管理分享，scoped key 保持 default-deny。
 	kbShares := g.apiKeyGroup(r.Group("/knowledge-bases/:id/shares"), apiKeyFullAccess())
 	{
 		// Share knowledge base
@@ -1291,10 +1319,10 @@ func RegisterOrganizationRoutes(r *gin.RouterGroup, orgHandler *handler.Organiza
 	//
 	// GET 走 OwnedAgentOrAdmin 作为 JWT 侧的 owner 校验；service 层
 	// ListSharesByAgent 现在也强制 tenant 归属（与 ListSharesByKnowledgeBase
-	// 对齐），这样 full-access API key（会短路路由 guard）也无法跨空间
+	// 对齐），这样 full-access API key（会短路路由 guard）也无法跨租户
 	// 枚举他人 agent 的分享。
 	// 同 KB 分享：分享管理不通过 capability 授予；仅 full-access key
-	// （空间级全权）可管理 agent 分享，scoped key 保持 default-deny。
+	// （租户级全权）可管理 agent 分享，scoped key 保持 default-deny。
 	agentShares := g.apiKeyGroup(r.Group("/agents/:id/shares"), apiKeyFullAccess())
 	{
 		agentShares.POST("", g.OwnedAgentOrAdmin(), orgHandler.ShareAgent)
@@ -1306,9 +1334,9 @@ func RegisterOrganizationRoutes(r *gin.RouterGroup, orgHandler *handler.Organiza
 	g.apiKeyRoute(r, http.MethodGet, "/shared-knowledge-bases", apiKeyManageSpaces(apiKeyFullAccess()), g.Viewer(), orgHandler.ListSharedKnowledgeBases)
 	// Shared agents route — Viewer+
 	g.apiKeyRoute(r, http.MethodGet, "/shared-agents", apiKeyManageSpaces(apiKeyFullAccess()), g.Viewer(), orgHandler.ListSharedAgents)
-	// "Disable by me" 是空间级偏好（写到 tenant_disabled_shared_agents），
-	// 影响整个空间在会话下拉里看到的 agent 列表。任何 Viewer 改这个表就
-	// 等于替整个空间做决定 — 必须 Admin+ 才允许调整。
+	// "Disable by me" 是租户级偏好（写到 tenant_disabled_shared_agents），
+	// 影响整个租户在会话下拉里看到的 agent 列表。任何 Viewer 改这个表就
+	// 等于替整个租户做决定 — 必须 Admin+ 才允许调整。
 	g.apiKeyRoute(r, http.MethodPost, "/shared-agents/disabled", apiKeyManageSpaces(apiKeyFullAccess()), g.Admin(), orgHandler.SetSharedAgentDisabledByMe)
 }
 
@@ -1833,7 +1861,8 @@ func serveKBScopedFiles(
 	// API keys are denied outright (as on /files): a signed URL's tenant/KB
 	// scope cannot authorize serving an arbitrary file_path under the owner
 	// tenant, and this route deliberately crosses the caller's own tenant.
-	r.GET("/knowledge-bases/:id/files",
+	r.GET(
+		"/knowledge-bases/:id/files",
 		middleware.DenyAPIKeyPrincipal(),
 		g.Viewer(),
 		g.KBAccessRead("id"),

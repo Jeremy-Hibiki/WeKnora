@@ -19,6 +19,7 @@ export const useUIStore = defineStore('ui', {
     manualEditorInitialTitle: '',
     manualEditorInitialContent: '',
     manualEditorInitialStatus: 'draft' as 'draft' | 'publish',
+    manualEditorFolderId: null as string | null,
     manualEditorOnSuccess: null as null | ((payload: { kbId: string; knowledgeId: string; status: 'draft' | 'publish' }) => void),
     sidebarCollapsed: localStorage.getItem('sidebar_collapsed') === 'true'
   }),
@@ -74,6 +75,7 @@ export const useUIStore = defineStore('ui', {
       title?: string
       content?: string
       status?: 'draft' | 'publish'
+      folderId?: string | null
       onSuccess?: (payload: { kbId: string; knowledgeId: string; status: 'draft' | 'publish' }) => void
     } = {}) {
       this.manualEditorMode = options.mode || 'create'
@@ -82,6 +84,7 @@ export const useUIStore = defineStore('ui', {
       this.manualEditorInitialTitle = options.title || ''
       this.manualEditorInitialContent = options.content || ''
       this.manualEditorInitialStatus = options.status || 'draft'
+      this.manualEditorFolderId = options.folderId ?? null
       this.manualEditorOnSuccess = options.onSuccess || null
       this.manualEditorVisible = true
     },
@@ -92,6 +95,7 @@ export const useUIStore = defineStore('ui', {
       this.manualEditorInitialContent = ''
       this.manualEditorInitialTitle = ''
       this.manualEditorInitialStatus = 'draft'
+      this.manualEditorFolderId = null
       this.manualEditorOnSuccess = null
     },
 

@@ -325,6 +325,35 @@ func (s *knowledgeBaseService) buildRetrievalParams(
 	currentTenantID := types.MustTenantIDFromContext(ctx)
 	var retrieveParams []types.RetrieveParams
 
+	// Resolve folder scoping. We pass folder IDs directly to the vector engine
+	// as a metadata filter (RetrieveParams.FolderIDs), avoiding the SQL
+	// round-trip to expand folder IDs → knowledge IDs. For include_subfolders,
+	// we expand the folder IDs to include descendants via a single SQL query
+	// that returns a small set of folder UUIDs (not knowledge IDs).
+	var resolvedFolderIDs []string
+	if len(params.FolderIDs) > 0 {
+		if params.IncludeSubfolders {
+			for _, kb := range groupKBs {
+				tenantID := kb.TenantID
+				if tenantID == 0 {
+					tenantID = currentTenantID
+				}
+				ids, err := s.kgRepo.ListFolderIDsWithDescendants(
+					ctx, tenantID, kb.ID, params.FolderIDs,
+				)
+				if err != nil {
+					logger.Warnf(ctx, "Failed to expand folder IDs with descendants for KB %s: %v", kb.ID, err)
+					continue
+				}
+				resolvedFolderIDs = append(resolvedFolderIDs, ids...)
+			}
+		} else {
+			resolvedFolderIDs = params.FolderIDs
+		}
+	}
+
+	mergedKnowledgeIDs := params.KnowledgeIDs
+
 	// Partition the group's KBs by index routing. A KB that does not have
 	// vector indexing enabled (e.g. wiki-only or graph-only KBs) has no
 	// embeddings to retrieve from, and typically has no EmbeddingModelID
@@ -367,7 +396,8 @@ func (s *knowledgeBaseService) buildRetrievalParams(
 				TopK:             matchCount,
 				Threshold:        params.VectorThreshold,
 				RetrieverType:    types.VectorRetrieverType,
-				KnowledgeIDs:     params.KnowledgeIDs,
+				KnowledgeIDs:     mergedKnowledgeIDs,
+				FolderIDs:        resolvedFolderIDs,
 				TagIDs:           params.TagIDs,
 				KnowledgeType:    knowledgeType,
 			})
@@ -396,13 +426,44 @@ func (s *knowledgeBaseService) buildRetrievalParams(
 			TopK:             matchCount,
 			Threshold:        params.KeywordThreshold,
 			RetrieverType:    types.KeywordsRetrieverType,
-			KnowledgeIDs:     params.KnowledgeIDs,
+			KnowledgeIDs:     mergedKnowledgeIDs,
+			FolderIDs:        resolvedFolderIDs,
 			TagIDs:           params.TagIDs,
 		})
 		logger.Info(ctx, "Keyword retrieval parameters setup completed")
 	}
 
 	return retrieveParams, nil
+}
+
+// mergeKnowledgeIDs merges two knowledge ID lists for retrieval filtering.
+// - If both are nil/empty, returns nil (no knowledge ID restriction).
+// - If only one is non-empty, returns that one.
+// - If both are non-empty, returns the intersection.
+func mergeKnowledgeIDs(existingIDs, folderIDs []string) []string {
+	if len(existingIDs) == 0 && len(folderIDs) == 0 {
+		return nil
+	}
+	if len(existingIDs) == 0 {
+		return folderIDs
+	}
+	if len(folderIDs) == 0 {
+		return existingIDs
+	}
+	// Both non-empty: take intersection
+	folderSet := make(map[string]bool, len(folderIDs))
+	for _, id := range folderIDs {
+		folderSet[id] = true
+	}
+	var result []string
+	seen := make(map[string]bool, len(existingIDs))
+	for _, id := range existingIDs {
+		if folderSet[id] && !seen[id] {
+			result = append(result, id)
+			seen[id] = true
+		}
+	}
+	return result
 }
 
 // resolveQueryEmbedding returns the query embedding for a store group. It

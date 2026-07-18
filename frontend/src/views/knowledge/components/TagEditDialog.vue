@@ -5,9 +5,10 @@
       <div class="tag-edit-heading">
         <div class="tag-edit-heading-row">
           <t-icon name="discount" size="16px" class="tag-edit-heading-icon" aria-hidden="true" />
-          <span class="tag-edit-title">{{ $t('knowledgeBase.tagEditDialogHeading') }}</span>
+          <span class="tag-edit-title">{{ batchMode ? $t('knowledgeBase.batchTag') : $t('knowledgeBase.tagEditDialogHeading') }}</span>
         </div>
-        <p class="tag-edit-document-name" :title="knowledgeName">{{ knowledgeName }}</p>
+        <p v-if="knowledgeName" class="tag-edit-document-name" :title="knowledgeName">{{ knowledgeName }}</p>
+        <p v-if="batchMode" class="tag-edit-batch-tip">{{ $t('knowledgeBase.batchTagAppendTip') }}</p>
       </div>
     </template>
 
@@ -106,6 +107,7 @@ const props = defineProps<{
   tagList: Tag[];
   selectedTags: Tag[];
   canManage?: boolean;
+  batchMode?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -310,6 +312,14 @@ function handleOpenManage() {
   line-height: 18px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.tag-edit-batch-tip {
+  margin: 0;
+  color: var(--td-brand-color);
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 16px;
 }
 
 .tag-edit-body {

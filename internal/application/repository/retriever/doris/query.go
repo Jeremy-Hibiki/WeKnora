@@ -19,6 +19,7 @@ const (
 	fieldKnowledgeID     = "knowledge_id"
 	fieldKnowledgeBaseID = "knowledge_base_id"
 	fieldTagID           = "tag_id"
+	fieldFolderID        = "folder_id"
 	fieldIsEnabled       = "is_enabled"
 	fieldEmbedding       = "embedding"
 )
@@ -27,7 +28,7 @@ const (
 var columns = []string{
 	fieldID, fieldContent, fieldSourceID, fieldSourceType,
 	fieldChunkID, fieldKnowledgeID, fieldKnowledgeBaseID, fieldTagID,
-	fieldIsEnabled, fieldEmbedding,
+	fieldFolderID, fieldIsEnabled, fieldEmbedding,
 }
 
 // columnsForRetrieve 是 Retrieve 时 SELECT 的列序，
@@ -35,7 +36,7 @@ var columns = []string{
 var columnsForRetrieve = []string{
 	fieldID, fieldContent, fieldSourceID, fieldSourceType,
 	fieldChunkID, fieldKnowledgeID, fieldKnowledgeBaseID, fieldTagID,
-	fieldIsEnabled,
+	fieldFolderID, fieldIsEnabled,
 }
 
 // columnsForCopy 是 CopyIndices 中分页 SELECT 时使用的列序，
@@ -43,7 +44,7 @@ var columnsForRetrieve = []string{
 var columnsForCopy = []string{
 	fieldID, fieldContent, fieldSourceID, fieldSourceType,
 	fieldChunkID, fieldKnowledgeID, fieldKnowledgeBaseID, fieldTagID,
-	fieldIsEnabled, fieldEmbedding,
+	fieldFolderID, fieldIsEnabled, fieldEmbedding,
 }
 
 // whereCond 表示一个 WHERE 子条件：clause 是参数化 SQL 片段（带 ? 占位），
@@ -130,6 +131,9 @@ func buildBaseFilter(params types.RetrieveParams) *whereBuilder {
 	}
 	if len(params.KnowledgeIDs) > 0 {
 		w.addIn(fieldKnowledgeID, params.KnowledgeIDs)
+	}
+	if len(params.FolderIDs) > 0 {
+		w.addIn(fieldFolderID, params.FolderIDs)
 	}
 	if len(params.TagIDs) > 0 {
 		w.addIn(fieldTagID, params.TagIDs)

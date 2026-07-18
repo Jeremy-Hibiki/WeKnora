@@ -204,9 +204,69 @@ export function uploadKnowledgeFile(
 // data.tag_ids: 可选，指定知识所属的多个标签 ID
 export function createKnowledgeFromURL(
   kbId: string,
-  data: { url: string; enable_multimodel?: boolean; tag_ids?: string[]; process_config?: KnowledgeProcessOverrides },
+  data: { url: string; enable_multimodel?: boolean; tag_ids?: string[]; folder_id?: string; process_config?: KnowledgeProcessOverrides },
 ) {
   return post(`/api/v1/knowledge-bases/${kbId}/knowledge/url`, data);
+}
+
+// Result shape returned by the folder / zip upload endpoints.
+export interface FolderUploadResult {
+  success: boolean;
+  created_folders: number;
+  uploaded_files: number;
+  skipped_files: number;
+  skipped: Array<{ path: string; reason: string }>;
+  errors: Array<{ path: string; reason: string }>;
+}
+
+// Shared options for folder/zip uploads.
+interface FolderUploadOptions {
+  root_folder_id?: string;
+  enable_multimodel?: boolean;
+  tag_ids?: string[];
+  channel?: string;
+  process_config?: KnowledgeProcessOverrides;
+}
+
+// Upload a whole directory (browser webkitdirectory). The server creates the
+// folder tree from the per-file relative paths atomically.
+export function uploadKnowledgeFolder(
+  kbId: string,
+  files: File[],
+  paths: string[],
+  options: FolderUploadOptions = {},
+  onProgress?: (progressEvent: unknown) => void,
+) {
+  const formData = new FormData();
+  for (const file of files) {
+    formData.append('files', file, file.name);
+  }
+  for (const p of paths) {
+    formData.append('paths', p);
+  }
+  if (options.root_folder_id) formData.append('root_folder_id', options.root_folder_id);
+  if (options.enable_multimodel !== undefined) formData.append('enable_multimodel', String(options.enable_multimodel));
+  if (options.tag_ids?.length) formData.append('tag_ids', options.tag_ids.join(','));
+  if (options.channel) formData.append('channel', options.channel);
+  if (options.process_config) formData.append('process_config', JSON.stringify(options.process_config));
+  return postUpload(`/api/v1/knowledge-bases/${kbId}/knowledge/folder`, formData, onProgress) as unknown as Promise<FolderUploadResult>;
+}
+
+// Upload a .zip archive; the server extracts it and rebuilds the folder tree.
+export function uploadKnowledgeZip(
+  kbId: string,
+  zipFile: File,
+  options: FolderUploadOptions = {},
+  onProgress?: (progressEvent: unknown) => void,
+) {
+  const formData = new FormData();
+  formData.append('file', zipFile, zipFile.name);
+  if (options.root_folder_id) formData.append('root_folder_id', options.root_folder_id);
+  if (options.enable_multimodel !== undefined) formData.append('enable_multimodel', String(options.enable_multimodel));
+  if (options.tag_ids?.length) formData.append('tag_ids', options.tag_ids.join(','));
+  if (options.channel) formData.append('channel', options.channel);
+  if (options.process_config) formData.append('process_config', JSON.stringify(options.process_config));
+  return postUpload(`/api/v1/knowledge-bases/${kbId}/knowledge/zip`, formData, onProgress) as unknown as Promise<FolderUploadResult>;
 }
 
 // 手工创建知识
@@ -217,6 +277,7 @@ export function createManualKnowledge(
     title: string
     content: string
     status: string
+    folder_id?: string
     tag_ids?: string[]
     process_config?: KnowledgeProcessOverrides
   },
@@ -236,6 +297,8 @@ export function listKnowledgeFiles(
     source?: string;
     start_time?: string;
     end_time?: string;
+    folder_id?: string;
+    folder_scope?: string;
   },
 ) {
   const query = new URLSearchParams();
@@ -248,6 +311,8 @@ export function listKnowledgeFiles(
   if (params.source) query.append('source', params.source);
   if (params.start_time) query.append('start_time', params.start_time);
   if (params.end_time) query.append('end_time', params.end_time);
+  if (params.folder_id) query.append('folder_id', params.folder_id);
+  if (params.folder_scope) query.append('folder_scope', params.folder_scope);
   const qs = query.toString();
   return get(`/api/v1/knowledge-bases/${kbId}/knowledge?${qs}`);
 }

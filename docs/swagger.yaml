@@ -293,6 +293,9 @@ definitions:
     - system.setting_changed
     - system.admin_promoted
     - system.admin_revoked
+    - system.user_created
+    - system.user_activated
+    - system.user_deactivated
     - system.user_password_reset
     - system.queue_task_retried
     - system.queue_task_deleted
@@ -319,6 +322,9 @@ definitions:
     - AuditActionSystemSettingChanged
     - AuditActionSystemAdminPromoted
     - AuditActionSystemAdminRevoked
+    - AuditActionSystemUserCreated
+    - AuditActionSystemUserActivated
+    - AuditActionSystemUserDeactivated
     - AuditActionSystemUserPasswordReset
     - AuditActionSystemQueueTaskRetried
     - AuditActionSystemQueueTaskDeleted
@@ -542,6 +548,20 @@ definitions:
       summarize_threshold:
         description: 'Summarize threshold: number of messages before summarization'
         type: integer
+    type: object
+  github_com_Tencent_WeKnora_internal_types.CreateFolderRequest:
+    properties:
+      color:
+        type: string
+      description:
+        type: string
+      name:
+        maxLength: 255
+        type: string
+      parent_folder_id:
+        type: string
+    required:
+    - name
     type: object
   github_com_Tencent_WeKnora_internal_types.CreateOrganizationRequest:
     properties:
@@ -1336,6 +1356,10 @@ definitions:
       file_type:
         description: File type of the knowledge
         type: string
+      folder_id:
+        description: Folder ID that this knowledge entry belongs to, nil for root
+          level
+        type: string
       id:
         description: Unique identifier of the knowledge
         type: string
@@ -1609,6 +1633,57 @@ definitions:
         type: string
       source_tenant_id:
         type: integer
+    type: object
+  github_com_Tencent_WeKnora_internal_types.KnowledgeFolder:
+    properties:
+      children:
+        description: Non-persisted fields populated on query
+        items:
+          $ref: '#/definitions/github_com_Tencent_WeKnora_internal_types.KnowledgeFolder'
+        type: array
+      color:
+        description: Optional display color
+        type: string
+      created_at:
+        description: Creation time
+        type: string
+      deleted_at:
+        allOf:
+        - $ref: '#/definitions/gorm.DeletedAt'
+        description: Soft delete timestamp
+      depth:
+        description: Depth level (1-based, depth=1 means direct child of root)
+        type: integer
+      description:
+        description: Optional description
+        type: string
+      id:
+        description: Unique identifier of the folder
+        type: string
+      knowledge_base_id:
+        description: ID of the knowledge base this folder belongs to
+        type: string
+      knowledge_count:
+        type: integer
+      name:
+        description: Display name of the folder
+        type: string
+      parent_folder_id:
+        description: ID of the parent folder, nil for root-level folders
+        type: string
+      path:
+        description: Materialized path (e.g., /parent_id/self_id/) for efficient subtree
+          queries
+        type: string
+      sort_order:
+        description: Sort order within the parent folder
+        type: integer
+      tenant_id:
+        description: Tenant ID
+        type: integer
+      updated_at:
+        description: Last updated time
+        type: string
     type: object
   github_com_Tencent_WeKnora_internal_types.KnowledgeMoveProgress:
     properties:
@@ -1927,6 +2002,8 @@ definitions:
       channel:
         type: string
       content:
+        type: string
+      folder_id:
         type: string
       process_config:
         $ref: '#/definitions/github_com_Tencent_WeKnora_internal_types.KnowledgeProcessOverrides'
@@ -2315,6 +2392,11 @@ definitions:
     - ModelTypeKnowledgeQA
     - ModelTypeVLLM
     - ModelTypeASR
+  github_com_Tencent_WeKnora_internal_types.MoveFolderRequest:
+    properties:
+      target_parent_folder_id:
+        type: string
+    type: object
   github_com_Tencent_WeKnora_internal_types.OBSEngineConfig:
     properties:
       access_key:
@@ -2922,6 +3004,17 @@ definitions:
         type: boolean
       disable_vector_match:
         type: boolean
+      folder_ids:
+        description: FolderIDs restricts retrieval to knowledge entries in the specified
+          folders.
+        items:
+          type: string
+        type: array
+      include_subfolders:
+        description: |-
+          IncludeSubfolders, when true alongside non-empty FolderIDs, includes
+          knowledge entries from all descendant subfolders.
+        type: boolean
       keyword_threshold:
         type: number
       knowledge_base_ids:
@@ -2983,6 +3076,13 @@ definitions:
       end_at:
         description: End at
         type: integer
+      folder_id:
+        description: FolderID is the folder this knowledge entry belongs to (nil/empty
+          = root)
+        type: string
+      folder_path:
+        description: FolderPath is the human-readable path of the folder (e.g. /Guides/Go/API)
+        type: string
       id:
         description: ID
         type: string
@@ -3096,6 +3196,10 @@ definitions:
         type: boolean
       agent_id:
         type: string
+      folder_ids:
+        items:
+          type: string
+        type: array
       knowledge_base_ids:
         items:
           type: string
@@ -3536,6 +3640,18 @@ definitions:
       success:
         description: Whether the tool executed successfully
         type: boolean
+    type: object
+  github_com_Tencent_WeKnora_internal_types.UpdateFolderRequest:
+    properties:
+      color:
+        type: string
+      description:
+        type: string
+      name:
+        maxLength: 255
+        type: string
+      sort_order:
+        type: integer
     type: object
   github_com_Tencent_WeKnora_internal_types.UpdateMemberRoleRequest:
     properties:
@@ -4364,6 +4480,29 @@ definitions:
       type:
         type: string
     type: object
+  internal_handler.AdminCreateUserRequest:
+    properties:
+      email:
+        type: string
+      password:
+        minLength: 6
+        type: string
+      username:
+        maxLength: 50
+        minLength: 2
+        type: string
+    required:
+    - email
+    - password
+    - username
+    type: object
+  internal_handler.AdminResetPasswordRequest:
+    properties:
+      new_password:
+        type: string
+    required:
+    - new_password
+    type: object
   internal_handler.BatchDeleteKnowledgeRequest:
     properties:
       ids:
@@ -4774,6 +4913,15 @@ definitions:
         type: array
       total:
         type: integer
+    type: object
+  internal_handler.ListUsersResponse:
+    properties:
+      total:
+        type: integer
+      users:
+        items:
+          $ref: '#/definitions/github_com_Tencent_WeKnora_internal_types.UserInfo'
+        type: array
     type: object
   internal_handler.ModelTestRequest:
     properties:
@@ -5262,6 +5410,11 @@ definitions:
           etc. by the JSON unmarshaller). Service.encodeForType normalises
           these against the registry's declared type and rejects mismatches.
     type: object
+  internal_handler.UpdateUserStatusRequest:
+    properties:
+      is_active:
+        type: boolean
+    type: object
   internal_handler.addMemberRequest:
     properties:
       email:
@@ -5360,6 +5513,25 @@ definitions:
     required:
     - name
     type: object
+  internal_handler.folderUploadResult:
+    properties:
+      created_folders:
+        type: integer
+      errors:
+        items:
+          $ref: '#/definitions/internal_handler.skipReason'
+        type: array
+      skipped:
+        items:
+          $ref: '#/definitions/internal_handler.skipReason'
+        type: array
+      skipped_files:
+        type: integer
+      success:
+        type: boolean
+      uploaded_files:
+        type: integer
+    type: object
   internal_handler.invitationLookupRequest:
     properties:
       token:
@@ -5401,6 +5573,13 @@ definitions:
         items:
           type: string
         type: array
+    type: object
+  internal_handler.skipReason:
+    properties:
+      path:
+        type: string
+      reason:
+        type: string
     type: object
   internal_handler.storageBackendRequest:
     properties:
@@ -5497,11 +5676,19 @@ definitions:
                     context; older clients that still send a literal bool also
                     land here (back-compat).
         type: boolean
+      folder_ids:
+        description: Folder IDs for search scope restriction
+        items:
+          type: string
+        type: array
       images:
         description: Attached images for multimodal chat
         items:
           $ref: '#/definitions/internal_handler_session.ImageAttachment'
         type: array
+      include_subfolders:
+        description: Include subfolders in folder scope
+        type: boolean
       knowledge_base_ids:
         description: Selected knowledge base ID for this request
         items:
@@ -8604,6 +8791,332 @@ paths:
       summary: 搜索FAQ
       tags:
       - FAQ管理
+  /knowledge-bases/{id}/folders:
+    get:
+      consumes:
+      - application/json
+      description: List all folders under a specific parent (or root if parent_id
+        not provided)
+      parameters:
+      - description: Knowledge Base ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Parent Folder ID (omit for root level)
+        in: query
+        name: parent_id
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/github_com_Tencent_WeKnora_internal_types.KnowledgeFolder'
+            type: array
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_Tencent_WeKnora_internal_errors.AppError'
+      security:
+      - Bearer: []
+      - ApiKeyAuth: []
+      summary: List folders
+      tags:
+      - Folders
+    post:
+      consumes:
+      - application/json
+      description: Create a new folder in the specified knowledge base
+      parameters:
+      - description: Knowledge Base ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Folder creation request
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_Tencent_WeKnora_internal_types.CreateFolderRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/github_com_Tencent_WeKnora_internal_types.KnowledgeFolder'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_Tencent_WeKnora_internal_errors.AppError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_Tencent_WeKnora_internal_errors.AppError'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/github_com_Tencent_WeKnora_internal_errors.AppError'
+      security:
+      - Bearer: []
+      - ApiKeyAuth: []
+      summary: Create a new folder
+      tags:
+      - Folders
+  /knowledge-bases/{id}/folders/{folder_id}:
+    delete:
+      consumes:
+      - application/json
+      description: 'Delete a folder (soft delete by default, use force=true for cascade
+        delete: subfolders are deleted and knowledge entries are moved to root)'
+      parameters:
+      - description: Knowledge Base ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Folder ID
+        in: path
+        name: folder_id
+        required: true
+        type: string
+      - description: Force cascade delete (delete subfolders and move knowledge entries
+          to root)
+        in: query
+        name: force
+        type: boolean
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_Tencent_WeKnora_internal_errors.AppError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_Tencent_WeKnora_internal_errors.AppError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_Tencent_WeKnora_internal_errors.AppError'
+      security:
+      - Bearer: []
+      - ApiKeyAuth: []
+      summary: Delete folder
+      tags:
+      - Folders
+    get:
+      consumes:
+      - application/json
+      description: Retrieve detailed information about a specific folder
+      parameters:
+      - description: Knowledge Base ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Folder ID
+        in: path
+        name: folder_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_Tencent_WeKnora_internal_types.KnowledgeFolder'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_Tencent_WeKnora_internal_errors.AppError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_Tencent_WeKnora_internal_errors.AppError'
+      security:
+      - Bearer: []
+      - ApiKeyAuth: []
+      summary: Get folder by ID
+      tags:
+      - Folders
+    put:
+      consumes:
+      - application/json
+      description: Update folder properties (name, color, description, sort order)
+      parameters:
+      - description: Knowledge Base ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Folder ID
+        in: path
+        name: folder_id
+        required: true
+        type: string
+      - description: Update request
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_Tencent_WeKnora_internal_types.UpdateFolderRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_Tencent_WeKnora_internal_types.KnowledgeFolder'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_Tencent_WeKnora_internal_errors.AppError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_Tencent_WeKnora_internal_errors.AppError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_Tencent_WeKnora_internal_errors.AppError'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/github_com_Tencent_WeKnora_internal_errors.AppError'
+      security:
+      - Bearer: []
+      - ApiKeyAuth: []
+      summary: Update folder
+      tags:
+      - Folders
+  /knowledge-bases/{id}/folders/{folder_id}/breadcrumb:
+    get:
+      consumes:
+      - application/json
+      description: Get the breadcrumb path from root to the specified folder
+      parameters:
+      - description: Knowledge Base ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Folder ID
+        in: path
+        name: folder_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/github_com_Tencent_WeKnora_internal_types.KnowledgeFolder'
+            type: array
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_Tencent_WeKnora_internal_errors.AppError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_Tencent_WeKnora_internal_errors.AppError'
+      security:
+      - Bearer: []
+      - ApiKeyAuth: []
+      summary: Get folder breadcrumb
+      tags:
+      - Folders
+  /knowledge-bases/{id}/folders/{folder_id}/move:
+    post:
+      consumes:
+      - application/json
+      description: Move a folder to a new parent location
+      parameters:
+      - description: Knowledge Base ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Folder ID
+        in: path
+        name: folder_id
+        required: true
+        type: string
+      - description: Move request
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_Tencent_WeKnora_internal_types.MoveFolderRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_Tencent_WeKnora_internal_types.KnowledgeFolder'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_Tencent_WeKnora_internal_errors.AppError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_Tencent_WeKnora_internal_errors.AppError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_Tencent_WeKnora_internal_errors.AppError'
+      security:
+      - Bearer: []
+      - ApiKeyAuth: []
+      summary: Move folder
+      tags:
+      - Folders
+  /knowledge-bases/{id}/folders/tree:
+    get:
+      consumes:
+      - application/json
+      description: Retrieve the complete folder hierarchy for a knowledge base
+      parameters:
+      - description: Knowledge Base ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/github_com_Tencent_WeKnora_internal_types.KnowledgeFolder'
+            type: array
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_Tencent_WeKnora_internal_errors.AppError'
+      security:
+      - Bearer: []
+      - ApiKeyAuth: []
+      summary: Get folder tree
+      tags:
+      - Folders
   /knowledge-bases/{id}/hybrid-search:
     get:
       consumes:
@@ -8830,6 +9343,57 @@ paths:
       summary: 从文件创建知识
       tags:
       - 知识管理
+  /knowledge-bases/{id}/knowledge/folder:
+    post:
+      consumes:
+      - multipart/form-data
+      description: Upload multiple files preserving their relative directory structure;
+        folders are auto-created.
+      parameters:
+      - description: Knowledge Base ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Files (repeated)
+        in: formData
+        name: files
+        required: true
+        type: file
+      - description: Relative path for each file (repeated, same order as files)
+        in: formData
+        name: paths
+        required: true
+        type: string
+      - description: Parent folder ID (omit for KB root)
+        in: formData
+        name: root_folder_id
+        type: string
+      - description: Enable multimodel parsing (applied to all files)
+        in: formData
+        name: enable_multimodel
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_handler.folderUploadResult'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_Tencent_WeKnora_internal_errors.AppError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_Tencent_WeKnora_internal_errors.AppError'
+      security:
+      - Bearer: []
+      - ApiKeyAuth: []
+      summary: Upload a folder (native browser directory upload)
+      tags:
+      - Knowledge
   /knowledge-bases/{id}/knowledge/manual:
     post:
       consumes:
@@ -8920,6 +9484,52 @@ paths:
       summary: 从URL创建知识
       tags:
       - 知识管理
+  /knowledge-bases/{id}/knowledge/zip:
+    post:
+      consumes:
+      - multipart/form-data
+      description: Extract a .zip and create folders/files matching the archive's
+        directory layout.
+      parameters:
+      - description: Knowledge Base ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Zip archive
+        in: formData
+        name: file
+        required: true
+        type: file
+      - description: Parent folder ID (omit for KB root)
+        in: formData
+        name: root_folder_id
+        type: string
+      - description: Enable multimodel parsing (applied to all files)
+        in: formData
+        name: enable_multimodel
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_handler.folderUploadResult'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_Tencent_WeKnora_internal_errors.AppError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_Tencent_WeKnora_internal_errors.AppError'
+      security:
+      - Bearer: []
+      - ApiKeyAuth: []
+      summary: Upload a zip archive and reconstruct its folder structure
+      tags:
+      - Knowledge
   /knowledge-bases/{id}/move-targets:
     get:
       description: 返回与源知识库 Type 一致、EmbeddingModelID 一致、非临时且不是自身的目标知识库列表
@@ -10538,6 +11148,83 @@ paths:
       summary: Get wiki statistics
       tags:
       - Wiki
+  /knowledges/{id}/folder:
+    put:
+      consumes:
+      - application/json
+      description: Move a knowledge entry to a specified folder or to root
+      parameters:
+      - description: Knowledge ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Move request with folder_id (null for root)
+        in: body
+        name: body
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_Tencent_WeKnora_internal_errors.AppError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_Tencent_WeKnora_internal_errors.AppError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_Tencent_WeKnora_internal_errors.AppError'
+      security:
+      - Bearer: []
+      - ApiKeyAuth: []
+      summary: Move knowledge to folder
+      tags:
+      - Knowledge
+  /knowledges/batch-move-folder:
+    post:
+      consumes:
+      - application/json
+      description: Move multiple knowledge entries to a specified folder or to root
+      parameters:
+      - description: Batch move request with knowledge_ids and folder_id
+        in: body
+        name: body
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_Tencent_WeKnora_internal_errors.AppError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_Tencent_WeKnora_internal_errors.AppError'
+      security:
+      - Bearer: []
+      - ApiKeyAuth: []
+      summary: Batch move knowledge to folder
+      tags:
+      - Knowledge
   /mcp-services:
     get:
       consumes:
@@ -13359,6 +14046,178 @@ paths:
             additionalProperties: true
             type: object
       summary: Apply the default storage quota to every existing workspace
+      tags:
+      - System Admin
+  /system/admin/users:
+    get:
+      description: |-
+        Return a paginated list of every user in the platform,
+        optionally filtered by a substring match over username /
+        email (`?search=...`). SystemAdmin only. Page size is capped
+        at 200 to keep large tables responsive.
+      parameters:
+      - description: Substring filter on username/email
+        in: query
+        name: search
+        type: string
+      - default: 0
+        description: Page offset
+        in: query
+        name: offset
+        type: integer
+      - default: 50
+        description: Page size (max 200)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_handler.ListUsersResponse'
+        "403":
+          description: 'Forbidden: not a system admin'
+          schema:
+            additionalProperties: true
+            type: object
+      summary: List all users (platform-wide)
+      tags:
+      - System Admin
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Provision a brand-new user account on behalf of a system
+        administrator. Bypasses the public registration_mode gate
+        (the SystemAdmin role is the authorisation). The new user
+        gets a default workspace + Owner membership, identical to
+        self-service registration; no login tokens are returned —
+        the user signs in themselves.
+      parameters:
+      - description: New user details
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.AdminCreateUserRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: User created
+          schema:
+            $ref: '#/definitions/github_com_Tencent_WeKnora_internal_types.UserInfo'
+        "400":
+          description: Bad request / duplicate
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: 'Forbidden: not a system admin'
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Create a new user (admin)
+      tags:
+      - System Admin
+  /system/admin/users/{id}/reset-password:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Set a new password for a user without requiring the old
+        password. The SystemAdmin caller is the authorisation.
+        Every outstanding session token for the user is revoked
+        so a stolen token cannot survive the reset. A system admin
+        cannot reset their own password here; self-service password
+        change still requires the old password. The new password
+        itself is never logged.
+      parameters:
+      - description: User ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: New password
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.AdminResetPasswordRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: '{ ok: true }'
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad request / weak password / self reset
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: 'Forbidden: not a system admin'
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: User not found
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Reset a user's password (admin)
+      tags:
+      - System Admin
+  /system/admin/users/{id}/status:
+    put:
+      consumes:
+      - application/json
+      description: |-
+        Flip a user's active status. Disabling revokes every
+        outstanding session token for the user so an existing
+        access token stops working immediately. The caller cannot
+        disable themselves (prevents a system admin from locking
+        themselves out). Idempotent: setting the current status
+        again is a no-op success.
+      parameters:
+      - description: User ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: New status
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.UpdateUserStatusRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Updated user
+          schema:
+            $ref: '#/definitions/github_com_Tencent_WeKnora_internal_types.UserInfo'
+        "400":
+          description: Bad request / self-disable
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: 'Forbidden: not a system admin'
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: User not found
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Enable or disable a user
       tags:
       - System Admin
   /system/admin/users/reset-password:

@@ -1839,6 +1839,7 @@ func (s *knowledgeService) buildFAQIndexInfoList(
 	ctx context.Context,
 	kb *types.KnowledgeBase,
 	chunk *types.Chunk,
+	folderID string,
 ) ([]*types.IndexInfo, error) {
 	indexMode := types.FAQIndexModeQuestionAnswer
 	questionIndexMode := types.FAQQuestionIndexModeCombined
@@ -1872,6 +1873,7 @@ func (s *knowledgeService) buildFAQIndexInfoList(
 				KnowledgeBaseID: chunk.KnowledgeBaseID,
 				KnowledgeType:   types.KnowledgeTypeFAQ,
 				TagID:           chunk.TagID,
+				FolderID:        folderID,
 				IsEnabled:       chunk.IsEnabled,
 				IsRecommended:   chunk.Flags.HasFlag(types.ChunkFlagRecommended),
 			},
@@ -1901,6 +1903,7 @@ func (s *knowledgeService) buildFAQIndexInfoList(
 		KnowledgeBaseID: chunk.KnowledgeBaseID,
 		KnowledgeType:   types.KnowledgeTypeFAQ,
 		TagID:           chunk.TagID,
+		FolderID:        folderID,
 		IsEnabled:       chunk.IsEnabled,
 		IsRecommended:   chunk.Flags.HasFlag(types.ChunkFlagRecommended),
 	})
@@ -1927,6 +1930,7 @@ func (s *knowledgeService) buildFAQIndexInfoList(
 			KnowledgeBaseID: chunk.KnowledgeBaseID,
 			KnowledgeType:   types.KnowledgeTypeFAQ,
 			TagID:           chunk.TagID,
+			FolderID:        folderID,
 			IsEnabled:       chunk.IsEnabled,
 			IsRecommended:   chunk.Flags.HasFlag(types.ChunkFlagRecommended),
 		})

@@ -1276,6 +1276,7 @@ func (s *knowledgeService) incrementalIndexFAQEntry(
 			KnowledgeBaseID: chunk.KnowledgeBaseID,
 			KnowledgeType:   types.KnowledgeTypeFAQ,
 			TagID:           chunk.TagID,
+			FolderID:        knowledge.GetFolderID(),
 			IsEnabled:       chunk.IsEnabled,
 			IsRecommended:   chunk.Flags.HasFlag(types.ChunkFlagRecommended),
 		})
@@ -1309,6 +1310,7 @@ func (s *knowledgeService) incrementalIndexFAQEntry(
 				KnowledgeBaseID: chunk.KnowledgeBaseID,
 				KnowledgeType:   types.KnowledgeTypeFAQ,
 				TagID:           chunk.TagID,
+				FolderID:        knowledge.GetFolderID(),
 				IsEnabled:       chunk.IsEnabled,
 				IsRecommended:   chunk.Flags.HasFlag(types.ChunkFlagRecommended),
 			})
@@ -1376,7 +1378,7 @@ func (s *knowledgeService) indexFAQChunks(ctx context.Context,
 	indexInfo := make([]*types.IndexInfo, 0)
 	chunkIDs := make([]string, 0, len(chunks))
 	for _, chunk := range chunks {
-		infoList, err := s.buildFAQIndexInfoList(ctx, kb, chunk)
+		infoList, err := s.buildFAQIndexInfoList(ctx, kb, chunk, knowledge.GetFolderID())
 		if err != nil {
 			return err
 		}
@@ -1486,7 +1488,7 @@ func (s *knowledgeService) deleteFAQChunkVectors(ctx context.Context,
 	indexInfo := make([]*types.IndexInfo, 0)
 	chunkIDs := make([]string, 0, len(chunks))
 	for _, chunk := range chunks {
-		infoList, err := s.buildFAQIndexInfoList(ctx, kb, chunk)
+		infoList, err := s.buildFAQIndexInfoList(ctx, kb, chunk, knowledge.GetFolderID())
 		if err != nil {
 			return err
 		}
