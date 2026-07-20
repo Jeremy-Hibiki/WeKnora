@@ -634,7 +634,7 @@ const tdTreeData = computed<TdTreeNode[]>(() => {
     const rp = (file as any).webkitRelativePath as string | undefined
     topKeys.add(rp ? rp.split('/')[0] : '__root__')
   }
-  return Array.from(topKeys).flatMap((key) => {
+  return Array.from(topKeys).flatMap<TdTreeNode>((key) => {
     if (key === '__root__') {
       return (dirMap.get('__root__')?.files || []).map((f) => ({
         value: `__root__/${f.name}`, label: f.name, _type: 'file' as const, _name: f.name, _size: f.size,

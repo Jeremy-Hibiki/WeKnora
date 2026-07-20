@@ -810,16 +810,17 @@ function onTagEditConfirm(tagIds: string[]) {
 }
 
 function openBatchTagDialog() {
+  type Tag = { id: string; name: string; color?: string };
   // 计算所有选中文档的标签交集
-  const selectedCards = cardList.value.filter((c: KnowledgeCard) => selectedIds.value.has(c.id));
+  const selectedCards: KnowledgeCard[] = cardList.value.filter((c: KnowledgeCard) => selectedIds.value.has(c.id));
   if (selectedCards.length === 0) return;
-  let commonTags: Array<{ id: string; name: string; color?: string }> | null = null;
+  let commonTags: Array<Tag> | null = null;
   for (const card of selectedCards) {
     const cardTags = card.tags || [];
     if (commonTags === null) {
       commonTags = [...cardTags];
     } else {
-      const commonMap = new Map(commonTags.map((t) => [t.id, t]));
+      const commonMap: Map<string, Tag> = new Map(commonTags.map((t) => [t.id, t]));
       const cardTagIds = new Set(cardTags.map((t) => t.id));
       for (const t of commonTags) {
         if (!cardTagIds.has(t.id)) commonMap.delete(t.id);
