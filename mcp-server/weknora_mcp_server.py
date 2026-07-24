@@ -463,7 +463,6 @@ class WeKnoraClient:
         query: str,
         knowledge_base_ids: list = None,
         web_search_enabled: bool = False,
-        enable_memory: bool = False,
         folder_ids: list = None,
         tag_ids: list = None,
         include_subfolders: bool = False,
@@ -481,8 +480,6 @@ class WeKnoraClient:
             body["knowledge_base_ids"] = knowledge_base_ids
         if web_search_enabled:
             body["web_search_enabled"] = True
-        if enable_memory:
-            body["enable_memory"] = True
         if folder_ids:
             body["folder_ids"] = folder_ids
         if tag_ids:
@@ -500,7 +497,6 @@ class WeKnoraClient:
         agent_id: str,
         knowledge_base_ids: list = None,
         web_search_enabled: bool = False,
-        enable_memory: bool = False,
         folder_ids: list = None,
         tag_ids: list = None,
         include_subfolders: bool = False,
@@ -519,8 +515,6 @@ class WeKnoraClient:
             body["knowledge_base_ids"] = knowledge_base_ids
         if web_search_enabled:
             body["web_search_enabled"] = True
-        if enable_memory:
-            body["enable_memory"] = True
         if folder_ids:
             body["folder_ids"] = folder_ids
         if tag_ids:
@@ -1107,11 +1101,6 @@ async def handle_list_tools() -> list[types.Tool]:
                         "description": "Enable web search alongside KB retrieval.",
                         "default": False,
                     },
-                    "enable_memory": {
-                        "type": "boolean",
-                        "description": "Enable cross-session memory.",
-                        "default": False,
-                    },
                     "folder_names": {
                         "type": "array",
                         "items": {"type": "string"},
@@ -1163,11 +1152,6 @@ async def handle_list_tools() -> list[types.Tool]:
                     "web_search_enabled": {
                         "type": "boolean",
                         "description": "Enable web search.",
-                        "default": False,
-                    },
-                    "enable_memory": {
-                        "type": "boolean",
-                        "description": "Enable cross-session memory.",
                         "default": False,
                     },
                     "folder_names": {
@@ -1532,7 +1516,6 @@ async def handle_call_tool(
                 args["query"],
                 knowledge_base_ids=kb_ids,
                 web_search_enabled=args.get("web_search_enabled", False),
-                enable_memory=args.get("enable_memory", False),
                 folder_ids=folder_ids or None,
                 tag_ids=tag_ids or None,
                 include_subfolders=args.get("include_subfolders", False),
@@ -1594,7 +1577,6 @@ async def handle_call_tool(
                 agent_id,
                 knowledge_base_ids=kb_ids,
                 web_search_enabled=args.get("web_search_enabled", False),
-                enable_memory=args.get("enable_memory", False),
                 folder_ids=folder_ids or None,
                 tag_ids=tag_ids or None,
                 include_subfolders=args.get("include_subfolders", False),

@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"net/http"
 	"os"
 	"strings"
 
@@ -43,7 +42,7 @@ func NewDorisRetrieveEngineRepository(
 
 	repo := &dorisRepository{
 		db:                  db,
-		httpClient:          &http.Client{},
+		httpClient:          newDorisStreamLoadHTTPClient(),
 		feHTTPBase:          strings.TrimRight(feHTTPBase, "/"),
 		username:            username,
 		password:            password,

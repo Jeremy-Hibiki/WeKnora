@@ -655,7 +655,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "integer",
-                        "description": "返回数量上限（默认6）",
+                        "description": "返回数量上限（未传时使用智能体配置的开场问题数量，最大30）",
                         "name": "limit",
                         "in": "query"
                     }
@@ -3962,6 +3962,76 @@ const docTemplate = `{
                 }
             }
         },
+        "/knowledge-bases/{id}/activity": {
+            "get": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "返回知识库的重要变更与后台任务入口。仅知识库创建者或所属空间管理员可读，共享空间不可读。",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "知识库"
+                ],
+                "summary": "获取知识库活动记录",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "知识库ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "游标：返回 id 小于此值的记录",
+                        "name": "after_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "页大小，1-100，默认 50",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "按 action 精确过滤",
+                        "name": "action",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "按 outcome 精确过滤",
+                        "name": "outcome",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "按 actor_user_id 精确过滤",
+                        "name": "actor",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_handler.auditLogListResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Tencent_WeKnora_internal_errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
         "/knowledge-bases/{id}/duplicate": {
             "post": {
                 "security": [
@@ -4049,8 +4119,14 @@ const docTemplate = `{
                     },
                     {
                         "type": "integer",
-                        "description": "标签ID筛选(seq_id)",
+                        "description": "标签ID筛选(seq_id)，兼容旧版单标签",
                         "name": "tag_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "标签UUID筛选，逗号分隔（OR语义）",
+                        "name": "tag_ids",
                         "in": "query"
                     },
                     {
@@ -4215,12 +4291,13 @@ const docTemplate = `{
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "将所有FAQ条目导出为CSV文件",
+                "description": "将所有FAQ条目导出为 CSV（默认）或 JSON。?format=json 返回与 FAQEntryPayload 结构兼容的数组。",
                 "consumes": [
                     "application/json"
                 ],
                 "produces": [
-                    "text/csv"
+                    "text/csv",
+                    "application/json"
                 ],
                 "tags": [
                     "FAQ管理"
@@ -4233,11 +4310,17 @@ const docTemplate = `{
                         "name": "id",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "导出格式：csv（默认）或 json",
+                        "name": "format",
+                        "in": "query"
                     }
                 ],
                 "responses": {
                     "200": {
-                        "description": "CSV文件",
+                        "description": "导出文件",
                         "schema": {
                             "type": "file"
                         }
@@ -4840,6 +4923,125 @@ const docTemplate = `{
                     },
                     "409": {
                         "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Tencent_WeKnora_internal_errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
+        "/knowledge-bases/{id}/folders/count": {
+            "get": {
+                "security": [
+                    {
+                        "Bearer": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Returns the number of knowledge entries in a folder subtree. Read-only — used by the tag-by-folder dialog to preview affected document count.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Folders"
+                ],
+                "summary": "Count documents in folder scope",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Knowledge Base ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma-separated folder IDs",
+                        "name": "folder_ids",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Include descendant subfolders (default true)",
+                        "name": "recursive",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Tencent_WeKnora_internal_errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
+        "/knowledge-bases/{id}/folders/tag-bulk": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Add or remove tags from all knowledge entries in a folder subtree. The folder is used as a selector — tags are written directly to knowledge_tag_relations. Only document KBs are supported.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Folders"
+                ],
+                "summary": "Bulk tag documents by folder",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Knowledge Base ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Tag-by-folder request",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_handler.TagByFolderRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Tencent_WeKnora_internal_errors.AppError"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
                         "schema": {
                             "$ref": "#/definitions/github_com_Tencent_WeKnora_internal_errors.AppError"
                         }
@@ -8861,7 +9063,7 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "200": {
-                        "description": "{authorization_url: string}",
+                        "description": "{authorization_url: string, authorization_attempt: string}",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -8883,7 +9085,7 @@ const docTemplate = `{
                         "Bearer": []
                     }
                 ],
-                "description": "返回当前用户对指定 MCP 服务是否已完成 OAuth 授权",
+                "description": "返回当前用户的 OAuth Token 生命周期状态；传 authorization_attempt 时只检查本次授权流程",
                 "produces": [
                     "application/json"
                 ],
@@ -8898,11 +9100,17 @@ const docTemplate = `{
                         "name": "id",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "本次授权尝试 ID；传入后不会接受历史 Token",
+                        "name": "authorization_attempt",
+                        "in": "query"
                     }
                 ],
                 "responses": {
                     "200": {
-                        "description": "{authorized: bool}",
+                        "description": "{authorized: bool, state: string, refresh_available: bool, expires_at?: string}",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -10682,7 +10890,7 @@ const docTemplate = `{
                         "Bearer": []
                     }
                 ],
-                "description": "搜索空间（排除已加入的空间）用于邀请加入组织；按空间去重，附带代表用户",
+                "description": "按空间名搜索可邀请的空间（排除已加入的空间）用于邀请加入组织；按空间去重",
                 "produces": [
                     "application/json"
                 ],
@@ -10700,7 +10908,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "搜索关键词（空间名、用户名或邮箱）",
+                        "description": "搜索关键词（空间名）",
                         "name": "q",
                         "in": "query",
                         "required": true
@@ -10882,7 +11090,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "来源过滤：web / feishu / wechat / slack / ...",
+                        "description": "来源过滤：web / embed / api / feishu / wechat / slack / ...（api、embed、IM 渠道需 Admin+）",
                         "name": "source",
                         "in": "query"
                     },
@@ -12329,6 +12537,105 @@ const docTemplate = `{
                 }
             }
         },
+        "/system/admin/api-keys": {
+            "get": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "Lists non-workspace API keys. Full tokens are always masked. Human SystemAdmin only.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "System Admin"
+                ],
+                "summary": "List platform API keys",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "Creates a capability-scoped key that may target any workspace through X-Tenant-ID. The plaintext token is returned once. Human SystemAdmin only.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "System Admin"
+                ],
+                "summary": "Create a platform API key",
+                "parameters": [
+                    {
+                        "description": "Platform API key",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_handler.platformAPIKeyCreateRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/system/admin/api-keys/{key_id}": {
+            "delete": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "Immediately revokes a platform API key. Human SystemAdmin only.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "System Admin"
+                ],
+                "summary": "Revoke a platform API key",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "API key ID",
+                        "name": "key_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/system/admin/audit-log": {
             "get": {
                 "security": [
@@ -12563,6 +12870,35 @@ const docTemplate = `{
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/internal_handler.RuntimeQueuesResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/system/admin/runtime/queues/{queue}/archived": {
+            "delete": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "System Admin"
+                ],
+                "summary": "Purge all archived tasks in a queue",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Queue name",
+                        "name": "queue",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
                         }
                     }
                 }
@@ -15752,10 +16088,47 @@ const docTemplate = `{
                 "system.user_activated",
                 "system.user_deactivated",
                 "system.user_password_reset",
+                "system.api_key_created",
+                "system.api_key_revoked",
                 "system.queue_task_retried",
                 "system.queue_task_deleted",
                 "system.queue_task_run_now",
-                "system.queue_task_cancelled"
+                "system.queue_task_cancelled",
+                "system.queue_archived_purged",
+                "kb.created",
+                "kb.updated",
+                "kb.deleted",
+                "kb.duplicated",
+                "kb.clone_started",
+                "kb.clone_completed",
+                "kb.clone_failed",
+                "knowledge.created",
+                "knowledge.updated",
+                "knowledge.deleted",
+                "knowledge.batch_deleted",
+                "knowledge.reparse_started",
+                "knowledge.parse_canceled",
+                "knowledge.move_started",
+                "knowledge.move_completed",
+                "knowledge.move_failed",
+                "tag.created",
+                "tag.updated",
+                "tag.deleted",
+                "datasource.created",
+                "datasource.updated",
+                "datasource.deleted",
+                "datasource.sync_started",
+                "datasource.sync_completed",
+                "datasource.sync_failed",
+                "datasource.paused",
+                "datasource.resumed",
+                "kb.share_added",
+                "kb.share_permission_changed",
+                "kb.share_removed",
+                "wiki.content_changed",
+                "faq.import_started",
+                "faq.import_completed",
+                "faq.import_failed"
             ],
             "x-enum-varnames": [
                 "AuditActionMemberAdded",
@@ -15781,10 +16154,47 @@ const docTemplate = `{
                 "AuditActionSystemUserActivated",
                 "AuditActionSystemUserDeactivated",
                 "AuditActionSystemUserPasswordReset",
+                "AuditActionSystemAPIKeyCreated",
+                "AuditActionSystemAPIKeyRevoked",
                 "AuditActionSystemQueueTaskRetried",
                 "AuditActionSystemQueueTaskDeleted",
                 "AuditActionSystemQueueTaskRunNow",
-                "AuditActionSystemQueueTaskCancelled"
+                "AuditActionSystemQueueTaskCancelled",
+                "AuditActionSystemQueueArchivedPurged",
+                "AuditActionKBCreated",
+                "AuditActionKBUpdated",
+                "AuditActionKBDeleted",
+                "AuditActionKBDuplicated",
+                "AuditActionKBCloneStarted",
+                "AuditActionKBCloneCompleted",
+                "AuditActionKBCloneFailed",
+                "AuditActionKnowledgeCreated",
+                "AuditActionKnowledgeUpdated",
+                "AuditActionKnowledgeDeleted",
+                "AuditActionKnowledgeBatchDeleted",
+                "AuditActionKnowledgeReparseStarted",
+                "AuditActionKnowledgeParseCanceled",
+                "AuditActionKnowledgeMoveStarted",
+                "AuditActionKnowledgeMoveCompleted",
+                "AuditActionKnowledgeMoveFailed",
+                "AuditActionTagCreated",
+                "AuditActionTagUpdated",
+                "AuditActionTagDeleted",
+                "AuditActionDataSourceCreated",
+                "AuditActionDataSourceUpdated",
+                "AuditActionDataSourceDeleted",
+                "AuditActionDataSourceSyncStarted",
+                "AuditActionDataSourceSyncCompleted",
+                "AuditActionDataSourceSyncFailed",
+                "AuditActionDataSourcePaused",
+                "AuditActionDataSourceResumed",
+                "AuditActionKBShareAdded",
+                "AuditActionKBSharePermissionChanged",
+                "AuditActionKBShareRemoved",
+                "AuditActionWikiContentChanged",
+                "AuditActionFAQImportStarted",
+                "AuditActionFAQImportCompleted",
+                "AuditActionFAQImportFailed"
             ]
         },
         "github_com_Tencent_WeKnora_internal_types.AuditLog": {
@@ -15820,6 +16230,12 @@ const docTemplate = `{
                 "request_path": {
                     "type": "string"
                 },
+                "scope_id": {
+                    "type": "string"
+                },
+                "scope_type": {
+                    "type": "string"
+                },
                 "target_id": {
                     "type": "string"
                 },
@@ -15838,11 +16254,19 @@ const docTemplate = `{
             "type": "string",
             "enum": [
                 "success",
-                "denied"
+                "accepted",
+                "denied",
+                "failed",
+                "partial",
+                "canceled"
             ],
             "x-enum-varnames": [
                 "AuditOutcomeSuccess",
-                "AuditOutcomeDenied"
+                "AuditOutcomeAccepted",
+                "AuditOutcomeDenied",
+                "AuditOutcomeFailed",
+                "AuditOutcomePartial",
+                "AuditOutcomeCanceled"
             ]
         },
         "github_com_Tencent_WeKnora_internal_types.COSEngineConfig": {
@@ -19278,6 +19702,7 @@ const docTemplate = `{
                     }
                 },
                 "query_text": {
+                    "description": "QueryText is required unless query_embedding is provided, keyword matching is disabled,\nand vector matching remains enabled.",
                     "type": "string"
                 },
                 "scope_tag_ids": {
@@ -19431,6 +19856,10 @@ const docTemplate = `{
                 },
                 "id": {
                     "description": "ID",
+                    "type": "string"
+                },
+                "im_platform": {
+                    "description": "IMPlatform is the originating IM platform (e.g. \"feishu\", \"wecom\") when\nthis session is bound to an IM channel. It is not stored on the sessions\ntable (it lives in im_channel_sessions) and is populated on read so the\nWeb console can classify a session's origin folder without a list query.",
                     "type": "string"
                 },
                 "is_pinned": {
@@ -20210,7 +20639,7 @@ const docTemplate = `{
                     "type": "boolean"
                 },
                 "preferences": {
-                    "description": "Per-user UI/feature preferences (memory toggle, future knobs).\nStored as JSON (jsonb on Postgres, TEXT on SQLite) via the\ndriver.Valuer / sql.Scanner methods on UserPreferences.",
+                    "description": "Per-user UI/feature preferences.\nStored as JSON (jsonb on Postgres, TEXT on SQLite) via the\ndriver.Valuer / sql.Scanner methods on UserPreferences.",
                     "allOf": [
                         {
                             "$ref": "#/definitions/github_com_Tencent_WeKnora_internal_types.UserPreferences"
@@ -20280,10 +20709,6 @@ const docTemplate = `{
         "github_com_Tencent_WeKnora_internal_types.UserPreferences": {
             "type": "object",
             "properties": {
-                "enable_memory": {
-                    "description": "EnableMemory mirrors the \"开启记忆功能\" switch in General Settings.\nnil  = preference never set (treat as feature default = false)\n*false / *true = user explicitly set the toggle.",
-                    "type": "boolean"
-                },
                 "last_active_tenant_id": {
                     "description": "LastActiveTenantID remembers the last workspace the user actively\nswitched into, so a fresh login (new device, cleared browser, new\nrefresh token) lands them back in that workspace instead of always\nbouncing to their home workspace. Login / RefreshToken validate that\nthe workspace still exists and the user still has an active membership\n(or CanAccessAllTenants) before honouring this preference; an\ninvalid pointer is best-effort cleared and the user falls back to\nhome.\n\nnil  = no preference (use user.TenantID, i.e. home)\n*0   = \"clear preference\" sentinel for the partial-update endpoint\n       (UpdateUserPreferences turns this into nil). Otherwise treat\n       a stored *0 the same as nil.\n*N   = preferred workspace id.",
                     "type": "integer"
@@ -20477,7 +20902,8 @@ const docTemplate = `{
                 "ollama",
                 "baidu",
                 "searxng",
-                "keenable"
+                "keenable",
+                "zhipu"
             ],
             "x-enum-varnames": [
                 "WebSearchProviderTypeBing",
@@ -20487,7 +20913,8 @@ const docTemplate = `{
                 "WebSearchProviderTypeOllama",
                 "WebSearchProviderTypeBaidu",
                 "WebSearchProviderTypeSearxng",
-                "WebSearchProviderTypeKeenable"
+                "WebSearchProviderTypeKeenable",
+                "WebSearchProviderTypeZhipu"
             ]
         },
         "github_com_Tencent_WeKnora_internal_types.WikiConfig": {
@@ -21820,7 +22247,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "appSecret": {
-                    "description": "AppSecret 用于 LKEAP Rerank 等需要第二段密钥的场景（对应模型 Parameters.AppSecret）。",
+                    "description": "AppSecret 用于 LKEAP / Volcengine Rerank 等需要第二段密钥的场景（对应模型 Parameters.AppSecret）。",
                     "type": "string"
                 },
                 "baseUrl": {
@@ -22057,7 +22484,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "appSecret": {
-                    "description": "AppSecret 用于 LKEAP Rerank 等需要第二段密钥的场景（对应模型 Parameters.AppSecret）。",
+                    "description": "AppSecret 用于 LKEAP / Volcengine Rerank 等需要第二段密钥的场景（对应模型 Parameters.AppSecret）。",
                     "type": "string"
                 },
                 "baseUrl": {
@@ -22330,6 +22757,40 @@ const docTemplate = `{
                 },
                 "suggestion_set_id": {
                     "type": "string"
+                }
+            }
+        },
+        "internal_handler.TagByFolderRequest": {
+            "type": "object",
+            "required": [
+                "action",
+                "folder_ids",
+                "tag_ids"
+            ],
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": [
+                        "add",
+                        "remove"
+                    ]
+                },
+                "folder_ids": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "recursive": {
+                    "type": "boolean"
+                },
+                "tag_ids": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "string"
+                    }
                 }
             }
         },
@@ -22719,6 +23180,23 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_handler.platformAPIKeyCreateRequest": {
+            "type": "object",
+            "properties": {
+                "capabilities": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "expires_at_unix": {
+                    "type": "integer"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
         "internal_handler.registerByInviteRequest": {
             "type": "object",
             "required": [
@@ -22815,9 +23293,6 @@ const docTemplate = `{
         "internal_handler.updateMyPreferencesRequest": {
             "type": "object",
             "properties": {
-                "enable_memory": {
-                    "type": "boolean"
-                },
                 "last_active_tenant_id": {
                     "description": "LastActiveTenantID lets the SPA persist \"after a fresh login,\ndrop me back into this workspace\" across devices. Send a positive\nworkspace id to set / replace, or 0 to clear. Membership is validated\nat next login, not here. Nil = field omitted from the PATCH and\nstays untouched.",
                     "type": "integer"
@@ -22875,10 +23350,6 @@ const docTemplate = `{
                 },
                 "disable_title": {
                     "description": "Whether to disable auto title generation",
-                    "type": "boolean"
-                },
-                "enable_memory": {
-                    "description": "EnableMemory is the per-request override for the memory feature.\nPointer + omitempty so the request can distinguish three states:\n  nil   = client did not specify; backend falls back to the calling\n          user's persisted preference (user.preferences.enable_memory),\n          defaulting to false if that's also unset. This is the path\n          used by the normal logged-in chat UI now that the toggle is\n          stored server-side per user.\n  *true / *false = explicit override. Embedded mode forces *false so a\n          user's personal memory setting doesn't leak into a widget\n          context; older clients that still send a literal bool also\n          land here (back-compat).",
                     "type": "boolean"
                 },
                 "folder_ids": {
@@ -23110,7 +23581,7 @@ const docTemplate = `{
     },
     "securityDefinitions": {
         "ApiKeyAuth": {
-            "description": "空间身份认证：输入 sk- 开头的 API Key",
+            "description": "API Key 认证：空间 Key 固定访问所属空间；平台 Key 调用空间接口时需同时传 X-Tenant-ID",
             "type": "apiKey",
             "name": "X-API-Key",
             "in": "header"
