@@ -315,7 +315,7 @@ const canMutateKnowledge = computed(() => {
 const effectiveKBPermission = computed(() => orgStore.getKBPermission(kbId.value) || kbInfo.value?.my_permission || '');
 
 const knowledgeList = ref<Array<{ id: string; name: string; type?: string }>>([]);
-let { cardList, total, moreIndex, details, getKnowled, delKnowledge, openMore, onVisibleChange: _onVisibleChange, getCardDetails, getfDetails } = useKnowledgeBase(kbId.value)
+let { cardList, total, moreIndex, details, getKnowled, delKnowledge, openMore, onVisibleChange: _onVisibleChange, getCardDetails, getfDetails, matchedFolderIds } = useKnowledgeBase(kbId.value)
 
 const showKbDetailContextualGuide = computed(() => {
   return Boolean(kbId.value)
@@ -536,7 +536,8 @@ let docSearchDebounce: number | null = null;
 const docSearchKeyword = ref('');
 // When true, the document keyword search is scoped to the current folder
 // (sends folder_scope = currentFolderId). Only meaningful while browsing
-// inside a folder; auto-resets when the user navigates away.
+// inside a folder; the toggle survives folder navigation within the same
+// knowledge base and resets when switching knowledge bases.
 const searchInFolder = ref(false);
 const selectedFileType = ref('');
 const fileTypeOptions = computed(() => [
@@ -620,15 +621,17 @@ watch([kbId, currentFolderId], ([newKbId, newFolderId]) => {
   }
 }, { immediate: true });
 
-// Reload files when folder changes
-watch(currentFolderId, (newFolderId) => {
-  // 'Search in this folder' only applies while browsing inside a folder;
-  // reset it when leaving to root so folder_scope is omitted (null) again.
-  if (!newFolderId) {
-    searchInFolder.value = false;
-  }
+// Reload files when folder changes. The 'search in this folder' toggle is
+// intentionally kept across folder navigation so users can walk the tree
+// while the scoped search stays active.
+watch(currentFolderId, () => {
   resetPage();
   loadKnowledgeFiles(kbId.value);
+});
+
+// Switching knowledge bases is a fresh context: reset the scoped-search toggle.
+watch(kbId, () => {
+  searchInFolder.value = false;
 });
 
 const handleFolderNavigate = async (folderId: string | null) => {
@@ -675,9 +678,52 @@ const handleFolderDialogSuccess = () => {
   loadFolderTree();
 };
 
+// True while the folder-scoped keyword search is active: the backend keeps the
+// document list at the current level and returns matched_folder_ids so the
+// hierarchy view can hide branches without any hit.
+const isFolderScopeSearchActive = computed(() =>
+  Boolean(searchInFolder.value && currentFolderId.value && docSearchKeyword.value.trim()),
+);
+
+// Paths of the folders (inside the scope subtree) that contain hit documents,
+// resolved from the full folder tree. Folder paths are materialized
+// (parent.path + id + '/'), so a path-prefix match is exactly an ancestor
+// relationship — the same semantics the backend uses for subtree expansion.
+const matchedFolderPaths = computed(() => {
+  const paths = new Set<string>();
+  if (!isFolderScopeSearchActive.value || matchedFolderIds.value.length === 0) {
+    return paths;
+  }
+  const pathById = new Map<string, string>();
+  const collectPaths = (nodes: KnowledgeFolder[]) => {
+    for (const node of nodes) {
+      pathById.set(node.id, node.path);
+      if (node.children?.length) collectPaths(node.children);
+    }
+  };
+  collectPaths(folderTree.value);
+  for (const id of matchedFolderIds.value) {
+    const path = pathById.get(id);
+    if (path) paths.add(path);
+  }
+  return paths;
+});
+
+// A child folder stays visible during a scoped search only when its own
+// subtree contains at least one hit document.
+const folderSubtreeHasMatch = (folder: KnowledgeFolder): boolean => {
+  for (const matchedPath of matchedFolderPaths.value) {
+    if (matchedPath.startsWith(folder.path)) return true;
+  }
+  return false;
+};
+
 // Prepend folder items to cardList for display
 const folderCardItems = computed(() => {
-  return folders.value.map((f) => ({
+  const visibleFolders = isFolderScopeSearchActive.value
+    ? folders.value.filter((f) => folderSubtreeHasMatch(f))
+    : folders.value;
+  return visibleFolders.map((f) => ({
     ...f,
     id: f.id,
     file_name: f.name,
@@ -706,9 +752,11 @@ const filterParams = computed(() => {
     end_time: end ? `${end} 23:59:59` : undefined,
     folder_id: inFolder || '__root__',
     // folder_scope is only sent when the user opts in to searching within the
-    // current folder; the backend then restricts keyword/vector recall to
-    // this folder (and its descendants) instead of the whole KB.
-    folder_scope: searchInFolder.value && inFolder ? inFolder : undefined,
+    // current folder AND has typed a keyword; the backend then keeps the
+    // document list at this level and returns matched_folder_ids so the
+    // hierarchy view can hide branches without hits. Without a keyword the
+    // view must look exactly like the unchecked state.
+    folder_scope: isFolderScopeSearchActive.value && inFolder ? inFolder : undefined,
   };
 });
 const tagMap = computed<Record<string, any>>(() => {

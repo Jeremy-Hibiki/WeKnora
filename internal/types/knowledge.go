@@ -111,6 +111,12 @@ type KnowledgeListFilter struct {
 	// Recursive, when true alongside a non-empty FolderID, includes entries from
 	// all descendant subfolders.
 	Recursive bool
+	// FolderScopeID scopes a keyword search to the subtree of the given folder
+	// without flattening the listing: the document list still returns only the
+	// direct children of FolderID, while ListMatchedFolderIDs reports which
+	// folders inside the scope subtree contain matching entries. Empty means
+	// no folder scoping.
+	FolderScopeID string
 	// folderIDs is an internal field set by the repository when Recursive is true;
 	// it holds the pre-resolved folder IDs (scope folder + all descendants).
 	// This avoids a non-constant LIKE subquery that can't use the path index.

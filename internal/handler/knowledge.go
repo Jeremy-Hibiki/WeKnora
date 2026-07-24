@@ -988,12 +988,18 @@ func (h *KnowledgeHandler) ListKnowledge(c *gin.Context) {
 		Source:      c.Query("source"),
 		FolderID:    c.Query("folder_id"),
 	}
-	// folder_scope: when provided, recursively list knowledge entries from
-	// the specified folder AND all its descendants. This powers the
-	// "search in this folder" toggle in the KB view.
+	// folder_scope: scopes the keyword search to the given folder's subtree
+	// WITHOUT flattening the listing. The document list still returns only the
+	// direct children of folder_id (so the hierarchical view and its pagination
+	// stay intact); the response additionally carries matched_folder_ids —
+	// the folders inside the scope subtree that contain matching entries — so
+	// the client can hide branches without matches. Legacy callers that sent
+	// only folder_scope are anchored at the scope root instead of the whole KB.
 	if folderScope := c.Query("folder_scope"); folderScope != "" {
-		filter.FolderID = folderScope
-		filter.Recursive = true
+		filter.FolderScopeID = folderScope
+		if (filter.FolderID == "" || filter.FolderID == "__root__") && folderScope != "__root__" {
+			filter.FolderID = folderScope
+		}
 	}
 	if raw := c.Query("start_time"); raw != "" {
 		t, err := parseFilterTime(raw)
@@ -1042,12 +1048,26 @@ func (h *KnowledgeHandler) ListKnowledge(c *gin.Context) {
 		secutils.SanitizeForLog(kbID),
 		result.Total,
 	)
+
+	// For scoped folder searches, also report which folders inside the scope
+	// subtree contain matching entries so the client can keep the hierarchy
+	// visible while hiding non-matching branches.
+	matchedFolderIDs := []string{}
+	if filter.FolderScopeID != "" {
+		matchedFolderIDs, err = h.kgService.ListMatchedFolderIDs(ctx, kbID, filter)
+		if err != nil {
+			logger.ErrorWithFields(ctx, err, nil)
+			c.Error(errors.NewInternalServerError(err.Error()))
+			return
+		}
+	}
 	c.JSON(http.StatusOK, gin.H{
-		"success":   true,
-		"data":      result.Data,
-		"total":     result.Total,
-		"page":      result.Page,
-		"page_size": result.PageSize,
+		"success":            true,
+		"data":               result.Data,
+		"total":              result.Total,
+		"page":               result.Page,
+		"page_size":          result.PageSize,
+		"matched_folder_ids": matchedFolderIDs,
 	})
 }
 
