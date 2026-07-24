@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -288,6 +289,7 @@ func (c *Connector) FetchIncremental(
 				Content:          content,
 				ContentType:      guessContentType(filePath),
 				FileName:         filepath.Base(filePath),
+				FolderPath:       svnFolderPath(filePath),
 				URL:              joinURLPath(cfg.RepoURL, filePath),
 				UpdatedAt:        info.RevisionToTime(),
 				SourceResourceID: resID,
@@ -428,6 +430,26 @@ func buildFilePath(resID, entryName string) string {
 	return "/" + resID + "/" + entryName
 }
 
+// svnFolderPath converts an SVN repository file path (e.g. "/docs/api/readme.md"
+// or "trunk/docs/api/readme.md") into a clean, slash-separated relative
+// directory path (e.g. "docs/api") suitable for rebuilding the source folder
+// hierarchy inside a knowledge base. Files at the repository root (e.g.
+// "/readme.md") return "" so the caller places them at the KB root.
+//
+// It operates on forward-slash paths — SVN paths are always POSIX-style, so the
+// path package (not filepath) avoids any host-OS separator interference. The
+// selected resource prefix (e.g. "trunk") is intentionally preserved: the
+// top-level synced node is the root of the reconstructed tree, matching "sync
+// the whole selected node" semantics.
+func svnFolderPath(filePath string) string {
+	dir := path.Clean(path.Dir(filePath))
+	dir = strings.TrimPrefix(dir, "/")
+	if dir == "" || dir == "." {
+		return ""
+	}
+	return dir
+}
+
 // buildFetchedItem creates a FetchedItem from a file entry.
 func buildFetchedItem(filePath string, content []byte, entry listEntry, resID, repoURL string) types.FetchedItem {
 	return types.FetchedItem{
@@ -436,6 +458,7 @@ func buildFetchedItem(filePath string, content []byte, entry listEntry, resID, r
 		Content:          content,
 		ContentType:      guessContentType(filePath),
 		FileName:         filepath.Base(filePath),
+		FolderPath:       svnFolderPath(filePath),
 		URL:              joinURLPath(repoURL, filePath),
 		UpdatedAt:        parseSVNDate(entry.Commit.Date),
 		SourceResourceID: resID,

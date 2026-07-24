@@ -310,6 +310,12 @@ type FetchedItem struct {
 	// Suggested file name
 	FileName string `json:"file_name"`
 
+	// FolderPath is the slash-separated relative directory path (e.g. "docs/api/v2")
+	// under which this item should be placed within the knowledge base. An empty
+	// value means the knowledge base root. File-oriented connectors (e.g. SVN) use
+	// it to reconstruct the source directory hierarchy during sync.
+	FolderPath string `json:"folder_path"`
+
 	// Original URL in external system
 	URL string `json:"url"`
 
