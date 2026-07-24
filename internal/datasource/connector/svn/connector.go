@@ -80,6 +80,13 @@ func (c *Connector) ListResources(
 		return nil, fmt.Errorf("list %q: %w", parentID, err)
 	}
 
+	// Normalize parentID the same way entryPath is built below, so a child's
+	// ParentID always equals its parent's ExternalID exactly ("" for root).
+	normalizedParentID := ""
+	if parentID != "" {
+		normalizedParentID = "/" + strings.Trim(parentID, "/")
+	}
+
 	resources := make([]types.Resource, 0, len(entries))
 	for _, e := range entries {
 		entryPath := e.Name
@@ -91,6 +98,7 @@ func (c *Connector) ListResources(
 		isDir := e.Kind == "dir"
 		resources = append(resources, types.Resource{
 			ExternalID:  entryPath,
+			ParentID:    normalizedParentID,
 			Name:        e.Name,
 			Type:        e.Kind,
 			URL:         joinURLPath(cfg.RepoURL, entryPath),
