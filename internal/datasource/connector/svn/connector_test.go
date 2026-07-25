@@ -212,8 +212,10 @@ func TestConnector_ListResources_Root(t *testing.T) {
 
 	require.Len(t, resources, 2)
 	assert.Equal(t, "/docs", resources[0].ExternalID)
+	assert.Equal(t, "", resources[0].ParentID)
 	assert.True(t, resources[0].HasChildren)
 	assert.Equal(t, "/readme.md", resources[1].ExternalID)
+	assert.Equal(t, "", resources[1].ParentID)
 	assert.False(t, resources[1].HasChildren)
 }
 
@@ -230,6 +232,7 @@ func TestConnector_ListResources_Subdirectory(t *testing.T) {
 
 	require.Len(t, resources, 1)
 	assert.Equal(t, "/docs/architecture", resources[0].ExternalID)
+	assert.Equal(t, "/docs", resources[0].ParentID)
 }
 
 func TestConnector_FetchAll(t *testing.T) {

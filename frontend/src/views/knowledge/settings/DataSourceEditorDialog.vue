@@ -273,10 +273,21 @@ async function ensureChildrenLoaded(id: string) {
     const res = await listResources(tempDsId.value, id)
     const children: Resource[] = res?.data || res || []
     if (children.length > 0) {
-      const existing = new Set(resources.value.map(r => r.external_id))
+      const existing = new Map(resources.value.map(r => [r.external_id, r]))
       const merged = resources.value.slice()
       for (const c of children) {
-        if (!existing.has(c.external_id)) merged.push(c)
+        // Defensive backfill: connectors that omit parent_id (e.g. SVN before
+        // the backend fix) would otherwise leave children parentless — they
+        // both fail to render under their parent AND surface as bogus root rows.
+        if (!c.parent_id) c.parent_id = id
+        const prev = existing.get(c.external_id)
+        if (prev) {
+          // A stale copy merged earlier without a parent_id must be re-attached
+          // to its real parent instead of staying a duplicate root row.
+          if (!prev.parent_id) prev.parent_id = c.parent_id
+        } else {
+          merged.push(c)
+        }
       }
       resources.value = merged
     }

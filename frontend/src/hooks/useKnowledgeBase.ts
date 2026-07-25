@@ -39,6 +39,10 @@ export default function (knowledgeBaseId?: string) {
     tags: [] as Array<{ id: string; name: string; color?: string }>,
   });
   let knowledgeListGeneration = 0;
+  // Folder IDs (inside the current folder_scope subtree) containing documents
+  // that match the active keyword search. Populated from the latest page-1
+  // response; only meaningful while a folder-scoped keyword search is active.
+  const matchedFolderIds = ref<string[]>([]);
   const getKnowled = (
     query: {
       page: number;
@@ -51,6 +55,7 @@ export default function (knowledgeBaseId?: string) {
       start_time?: string;
       end_time?: string;
       folder_id?: string;
+      folder_scope?: string;
     } = { page: 1, page_size: 35 },
     kbId?: string,
   ): Promise<void> => {
@@ -84,6 +89,9 @@ export default function (knowledgeBaseId?: string) {
         
         if (query.page === 1) {
           cardList.value = cardList_;
+          matchedFolderIds.value = Array.isArray(result.matched_folder_ids)
+            ? result.matched_folder_ids
+            : [];
         } else {
           cardList.value.push(...cardList_);
         }
@@ -256,5 +264,6 @@ export default function (knowledgeBaseId?: string) {
     getCardDetails,
     total,
     getfDetails,
+    matchedFolderIds,
   };
 }

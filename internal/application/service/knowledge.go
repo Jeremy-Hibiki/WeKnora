@@ -562,6 +562,28 @@ func (s *knowledgeService) ListPagedKnowledgeByKnowledgeBaseID(ctx context.Conte
 	return types.NewPageResult(total, page, knowledges), nil
 }
 
+// ListMatchedFolderIDs returns the distinct folder IDs inside the
+// filter.FolderScopeID subtree that contain knowledge entries matching the
+// filter. The hierarchical "search in this folder" view uses it to keep only
+// the branches with matching documents visible. Without a folder scope or a
+// keyword there is nothing to narrow, so it short-circuits to an empty slice.
+func (s *knowledgeService) ListMatchedFolderIDs(ctx context.Context,
+	kbID string, filter types.KnowledgeListFilter,
+) ([]string, error) {
+	if filter.FolderScopeID == "" || strings.TrimSpace(filter.Keyword) == "" {
+		return []string{}, nil
+	}
+	matchedFolderIDs, err := s.repo.ListMatchedFolderIDs(ctx,
+		ctx.Value(types.TenantIDContextKey).(uint64), kbID, filter)
+	if err != nil {
+		return nil, err
+	}
+	if matchedFolderIDs == nil {
+		matchedFolderIDs = []string{}
+	}
+	return matchedFolderIDs, nil
+}
+
 // GetKnowledgeFile retrieves the physical file associated with a knowledge entry
 func (s *knowledgeService) GetKnowledgeFile(ctx context.Context, id string) (io.ReadCloser, string, error) {
 	// Get knowledge record
