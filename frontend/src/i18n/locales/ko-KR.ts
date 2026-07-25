@@ -691,7 +691,6 @@ export default {
     dragFileNotText: "텍스트나 링크가 아닌 파일을 드래그하세요",
     searchPlaceholder: "지식베이스 검색...",
     docSearchPlaceholder: "문서 이름 검색...",
-    searchInFolder: "이 폴더에서 검색",
     folderPath: "폴더",
     fileTypeFilter: "파일 유형",
     allFileTypes: "모든 유형",

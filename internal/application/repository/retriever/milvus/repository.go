@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/milvus-io/milvus/client/v2/column"
 	"github.com/milvus-io/milvus/client/v2/entity"
 	"github.com/milvus-io/milvus/client/v2/index"
 	client "github.com/milvus-io/milvus/client/v2/milvusclient"
@@ -39,7 +38,7 @@ const (
 
 var allFields = []string{
 	fieldID, fieldContent, fieldSourceID, fieldSourceType, fieldChunkID,
-	fieldKnowledgeID, fieldKnowledgeBaseID, fieldTagID, fieldFolderID, fieldIsEnabled, fieldEmbedding,
+	fieldKnowledgeID, fieldKnowledgeBaseID, fieldTagID, fieldFolderID, fieldIsEnabled,
 }
 
 // NewMilvusRetrieveEngineRepository creates and initializes a new Milvus repository.
@@ -558,16 +557,24 @@ func (m *milvusRepository) updateChunkEnabledStatusInCollection(
 		return err
 	}
 
-	upsertEmbeddings := make([]*MilvusVectorEmbedding, 0, len(embeddings))
+	// Partial upsert: send only the primary key + is_enabled. The embedding
+	// vector is deliberately omitted so the server (merge mode) preserves it,
+	// instead of round-tripping vectors back and re-validating dim.
+	ids := make([]string, 0, len(embeddings))
+	isEnableds := make([]bool, 0, len(embeddings))
 	for _, embedding := range embeddings {
-		embedding.IsEnabled = enabled
-		upsertEmbeddings = append(upsertEmbeddings, &embedding.MilvusVectorEmbedding)
+		ids = append(ids, embedding.ID)
+		isEnableds = append(isEnableds, enabled)
 	}
-	if len(upsertEmbeddings) == 0 {
+	if len(ids) == 0 {
 		return nil
 	}
 
-	req := createUpsert(collectionName, upsertEmbeddings)
+	req := createPartialUpsert(collectionName, scalarUpdate{
+		ids:   ids,
+		field: fieldIsEnabled,
+		bools: isEnableds,
+	})
 	if _, err := m.client.Upsert(ctx, req); err != nil {
 		return err
 	}
@@ -645,13 +652,21 @@ func (m *milvusRepository) BatchUpdateChunkTagID(ctx context.Context, chunkTagMa
 				log.Warnf("[Milvus] Failed to search chunks in %s: %v", collectionName, err)
 				continue
 			}
-			upsertEmbeddings := make([]*MilvusVectorEmbedding, 0, len(embeddings))
+			// Partial upsert: send only the primary key + tag_id. The embedding
+			// vector is deliberately omitted so the server (merge mode) preserves
+			// it, instead of round-tripping vectors back and re-validating dim.
+			ids := make([]string, 0, len(embeddings))
+			tagIDs := make([]string, 0, len(embeddings))
 			for _, embedding := range embeddings {
-				embedding.TagID = tagID
-				upsertEmbeddings = append(upsertEmbeddings, &embedding.MilvusVectorEmbedding)
+				ids = append(ids, embedding.ID)
+				tagIDs = append(tagIDs, tagID)
 			}
-			if len(upsertEmbeddings) > 0 {
-				req := createUpsert(collectionName, upsertEmbeddings)
+			if len(ids) > 0 {
+				req := createPartialUpsert(collectionName, scalarUpdate{
+					ids:      ids,
+					field:    fieldTagID,
+					varchars: tagIDs,
+				})
 				_, err := m.client.Upsert(ctx, req)
 				if err != nil {
 					log.Warnf("[Milvus] Failed to update chunks in %s: %v", collectionName, err)
@@ -713,13 +728,21 @@ func (m *milvusRepository) BatchUpdateFolderID(ctx context.Context, knowledgeFol
 				log.Warnf("[Milvus] Failed to search chunks in %s: %v", collectionName, err)
 				continue
 			}
-			upsertEmbeddings := make([]*MilvusVectorEmbedding, 0, len(embeddings))
+			// Partial upsert: send only the primary key + folder_id. The embedding
+			// vector is deliberately omitted so the server (merge mode) preserves
+			// it, instead of round-tripping vectors back and re-validating dim.
+			ids := make([]string, 0, len(embeddings))
+			folderIDs := make([]string, 0, len(embeddings))
 			for _, embedding := range embeddings {
-				embedding.FolderID = folderID
-				upsertEmbeddings = append(upsertEmbeddings, &embedding.MilvusVectorEmbedding)
+				ids = append(ids, embedding.ID)
+				folderIDs = append(folderIDs, folderID)
 			}
-			if len(upsertEmbeddings) > 0 {
-				req := createUpsert(collectionName, upsertEmbeddings)
+			if len(ids) > 0 {
+				req := createPartialUpsert(collectionName, scalarUpdate{
+					ids:      ids,
+					field:    fieldFolderID,
+					varchars: folderIDs,
+				})
 				_, err := m.client.Upsert(ctx, req)
 				if err != nil {
 					log.Warnf("[Milvus] Failed to update chunks in %s: %v", collectionName, err)
@@ -1183,6 +1206,33 @@ func createUpsert(collectionName string, embeddings []*MilvusVectorEmbedding) cl
 	return opt
 }
 
+// scalarUpdate is a single partial-upsert payload: the primary key plus one
+// scalar field whose value should be merged. The embedding vector and all
+// other fields are omitted so Milvus (merge mode, >= v2.6.2) preserves them
+// verbatim — avoiding the vector round-trip that previously triggered
+// "vector dim 0 not match collection definition" on metadata-only updates.
+type scalarUpdate struct {
+	ids      []string // primary key values (fieldID)
+	field    string   // scalar field name to update
+	varchars []string // set when field is a varchar field
+	bools    []bool   // set when field is a bool field
+}
+
+// createPartialUpsert builds a merge-mode upsert for a single scalar field.
+// Only the primary key and the target field are sent; the embedding column is
+// intentionally excluded so the server retains the original vector.
+func createPartialUpsert(collectionName string, u scalarUpdate) client.UpsertOption {
+	opt := client.NewColumnBasedInsertOption(collectionName).
+		WithVarcharColumn(fieldID, u.ids)
+	switch u.field {
+	case fieldTagID, fieldFolderID:
+		opt = opt.WithVarcharColumn(u.field, u.varchars)
+	case fieldIsEnabled:
+		opt = opt.WithBoolColumn(u.field, u.bools)
+	}
+	return opt.WithPartialUpdate(true)
+}
+
 func convertResultSet(resultSet []client.ResultSet) ([]*MilvusVectorEmbeddingWithScore, []float64, error) {
 	var results []*MilvusVectorEmbeddingWithScore
 	var scores []float64
@@ -1295,23 +1345,6 @@ func convertResultSet(resultSet []client.ResultSet) ([]*MilvusVectorEmbeddingWit
 					return nil, nil, err
 				}
 				docs[i].IsEnabled = val
-			}
-		}
-		if field == fieldEmbedding {
-			vectorColumn, ok := columns.(*column.ColumnDoubleArray)
-			if !ok {
-				continue
-			}
-			for i := 0; i < vectorColumn.Len(); i++ {
-				val, err := vectorColumn.Value(i)
-				if err != nil {
-					return nil, nil, fmt.Errorf("get vector failed: %w", err)
-				}
-				embedding := make([]float32, len(val))
-				for j, v := range val {
-					embedding[j] = float32(v)
-				}
-				docs[i].Embedding = embedding
 			}
 		}
 	}

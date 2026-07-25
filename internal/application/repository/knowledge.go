@@ -210,57 +210,6 @@ func (r *knowledgeRepository) ListPagedKnowledgeByKnowledgeBaseID(
 	return knowledges, total, nil
 }
 
-// ListMatchedFolderIDs returns the distinct folder IDs inside the
-// filter.FolderScopeID subtree that contain knowledge entries matching the
-// given filter. It powers the "search in this folder" hierarchical view: the
-// client keeps the folder tree visible and only hides branches whose subtree
-// has no matching documents.
-func (r *knowledgeRepository) ListMatchedFolderIDs(
-	ctx context.Context,
-	tenantID uint64,
-	kbID string,
-	filter types.KnowledgeListFilter,
-) ([]string, error) {
-	if filter.FolderScopeID == "" || filter.FolderScopeID == "__root__" {
-		return nil, nil
-	}
-
-	// Resolve the scope subtree folder IDs via the materialized path, the
-	// same index-friendly expansion ListPagedKnowledgeByKnowledgeBaseID uses.
-	var folder types.KnowledgeFolder
-	if err := r.db.WithContext(ctx).
-		Where("id = ? AND tenant_id = ?", filter.FolderScopeID, tenantID).
-		First(&folder).Error; err != nil {
-		// Unknown scope folder: no subtree, hence no matches.
-		return nil, nil
-	}
-	var scopeFolderIDs []string
-	if err := r.db.WithContext(ctx).Model(&types.KnowledgeFolder{}).
-		Where("path LIKE ?", folder.Path+"%").
-		Pluck("id", &scopeFolderIDs).Error; err != nil {
-		return nil, err
-	}
-	if len(scopeFolderIDs) == 0 {
-		return nil, nil
-	}
-
-	// Reuse the document-list filter dimensions (keyword, tags, type, ...) but
-	// widen the folder constraint to the whole scope subtree.
-	scopeFilter := filter
-	scopeFilter.FolderID = filter.FolderScopeID
-	scopeFilter.FolderIDs = scopeFolderIDs
-
-	matchedFolderIDs := []string{}
-	if err := applyKnowledgeListFilter(
-		r.db.WithContext(ctx).Model(&types.Knowledge{}).
-			Where("tenant_id = ? AND knowledge_base_id = ?", tenantID, kbID),
-		scopeFilter,
-	).Distinct().Pluck("folder_id", &matchedFolderIDs).Error; err != nil {
-		return nil, err
-	}
-	return matchedFolderIDs, nil
-}
-
 // UpdateKnowledge updates knowledge
 func (r *knowledgeRepository) UpdateKnowledge(ctx context.Context, knowledge *types.Knowledge) error {
 	err := r.db.WithContext(ctx).Omit(omitFieldsOnUpdate...).Save(knowledge).Error

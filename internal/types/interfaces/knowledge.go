@@ -86,15 +86,6 @@ type KnowledgeService interface {
 		page *types.Pagination,
 		filter types.KnowledgeListFilter,
 	) (*types.PageResult, error)
-	// ListMatchedFolderIDs returns the distinct folder IDs inside the
-	// filter.FolderScopeID subtree that contain knowledge entries matching the
-	// given filter. Returns an empty slice when no folder scope or keyword is
-	// set — the client only consumes this field for scoped keyword searches.
-	ListMatchedFolderIDs(
-		ctx context.Context,
-		kbID string,
-		filter types.KnowledgeListFilter,
-	) ([]string, error)
 	// DeleteKnowledge deletes knowledge by ID.
 	DeleteKnowledge(ctx context.Context, id string) error
 	// DeleteKnowledgeList deletes multiple knowledge entries by IDs.
@@ -272,13 +263,6 @@ type KnowledgeRepository interface {
 	ListPagedKnowledgeByKnowledgeBaseID(ctx context.Context,
 		tenantID uint64, kbID string, page *types.Pagination, filter types.KnowledgeListFilter,
 	) ([]*types.Knowledge, int64, error)
-	// ListMatchedFolderIDs returns the distinct folder IDs inside the
-	// filter.FolderScopeID subtree that contain knowledge entries matching the
-	// given filter. Folder-level filtering (FolderID) is replaced by the scope
-	// subtree so the result covers the whole subtree, not just one level.
-	ListMatchedFolderIDs(ctx context.Context,
-		tenantID uint64, kbID string, filter types.KnowledgeListFilter,
-	) ([]string, error)
 	UpdateKnowledge(ctx context.Context, knowledge *types.Knowledge) error
 	// UpdateKnowledgeBatch updates knowledge items in batch
 	UpdateKnowledgeBatch(ctx context.Context, knowledgeList []*types.Knowledge) error

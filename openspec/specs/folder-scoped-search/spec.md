@@ -73,19 +73,6 @@ Each search result SHALL include the folder path (e.g. `/Guides/Go/API`) of the 
 - **WHEN** a search result originates from a root-level knowledge entry
 - **THEN** the result object includes `folder_path: ""` (or null) and `folder_id: null`
 
-### Requirement: UI folder-scoped search toggle
-
-The knowledge base UI SHALL provide a toggle or contextual action to restrict the search to the currently browsed folder and its descendants. When toggled on, the search query includes the current folder as `folder_scope`.
-
-#### Scenario: Searching within a folder
-- **WHEN** a user navigates to folder "Guides" and enables "search in this folder"
-- **THEN** subsequent searches include `folder_scope = "<guides-folder-id>"` in the request
-- **AND** results are limited to documents in "Guides" or its subfolders
-
-#### Scenario: Clearing folder scope
-- **WHEN** the user disables "search in this folder"
-- **THEN** subsequent searches omit `folder_scope` and search the entire KB
-
 ### Requirement: Vector metadata update on folder move
 
 When a knowledge entry is moved to a different folder via `MoveToFolder` or `BatchMoveToFolder`, the system SHALL update the `folder_id` metadata of all vector-store points belonging to that knowledge entry via a `BatchUpdateFolderID` call — without re-embedding. The update SHALL broadcast across all dimension-sharded collections in every registered vector engine.

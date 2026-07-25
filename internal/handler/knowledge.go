@@ -500,7 +500,8 @@ func (h *KnowledgeHandler) CreateKnowledgeFromURL(c *gin.Context) {
 		return
 	}
 
-	logger.Infof(ctx, "Received URL request: %s, file_name: %s, file_type: %s",
+	logger.Infof(
+		ctx, "Received URL request: %s, file_name: %s, file_type: %s",
 		secutils.SanitizeForLog(req.URL),
 		secutils.SanitizeForLog(req.FileName),
 		secutils.SanitizeForLog(req.FileType),
@@ -513,7 +514,8 @@ func (h *KnowledgeHandler) CreateKnowledgeFromURL(c *gin.Context) {
 		return
 	}
 
-	logger.Infof(ctx,
+	logger.Infof(
+		ctx,
 		"Creating knowledge from URL, knowledge base ID: %s, URL: %s",
 		secutils.SanitizeForLog(kbID),
 		secutils.SanitizeForLog(req.URL),
@@ -990,19 +992,6 @@ func (h *KnowledgeHandler) ListKnowledge(c *gin.Context) {
 		Source:      c.Query("source"),
 		FolderID:    c.Query("folder_id"),
 	}
-	// folder_scope: scopes the keyword search to the given folder's subtree
-	// WITHOUT flattening the listing. The document list still returns only the
-	// direct children of folder_id (so the hierarchical view and its pagination
-	// stay intact); the response additionally carries matched_folder_ids —
-	// the folders inside the scope subtree that contain matching entries — so
-	// the client can hide branches without matches. Legacy callers that sent
-	// only folder_scope are anchored at the scope root instead of the whole KB.
-	if folderScope := c.Query("folder_scope"); folderScope != "" {
-		filter.FolderScopeID = folderScope
-		if (filter.FolderID == "" || filter.FolderID == "__root__") && folderScope != "__root__" {
-			filter.FolderID = folderScope
-		}
-	}
 	if raw := c.Query("start_time"); raw != "" {
 		t, err := parseFilterTime(raw)
 		if err != nil {
@@ -1051,25 +1040,12 @@ func (h *KnowledgeHandler) ListKnowledge(c *gin.Context) {
 		result.Total,
 	)
 
-	// For scoped folder searches, also report which folders inside the scope
-	// subtree contain matching entries so the client can keep the hierarchy
-	// visible while hiding non-matching branches.
-	matchedFolderIDs := []string{}
-	if filter.FolderScopeID != "" {
-		matchedFolderIDs, err = h.kgService.ListMatchedFolderIDs(ctx, kbID, filter)
-		if err != nil {
-			logger.ErrorWithFields(ctx, err, nil)
-			c.Error(errors.NewInternalServerError(err.Error()))
-			return
-		}
-	}
 	c.JSON(http.StatusOK, gin.H{
-		"success":            true,
-		"data":               result.Data,
-		"total":              result.Total,
-		"page":               result.Page,
-		"page_size":          result.PageSize,
-		"matched_folder_ids": matchedFolderIDs,
+		"success":   true,
+		"data":      result.Data,
+		"total":     result.Total,
+		"page":      result.Page,
+		"page_size": result.PageSize,
 	})
 }
 
@@ -1220,7 +1196,8 @@ func (h *KnowledgeHandler) BatchDeleteKnowledge(c *gin.Context) {
 	// "leaking" to root level after force-deleting the containing folder.
 	if len(folderIDs) > 0 {
 		childKnowledgeIDs, err := h.kgService.ListKnowledgeIDsByFolderIDs(
-			ctx, effectiveTenantID, kbID, folderIDs, true)
+			ctx, effectiveTenantID, kbID, folderIDs, true,
+		)
 		if err != nil {
 			logger.ErrorWithFields(ctx, err, map[string]interface{}{
 				"folder_ids": folderIDs,
@@ -1248,7 +1225,8 @@ func (h *KnowledgeHandler) BatchDeleteKnowledge(c *gin.Context) {
 					"folder_id": secutils.SanitizeForLog(folderID),
 				})
 				c.Error(errors.NewBadRequestError(
-					fmt.Sprintf("Failed to delete folder: %s", err.Error())))
+					fmt.Sprintf("Failed to delete folder: %s", err.Error()),
+				))
 				return
 			}
 		}
@@ -1285,7 +1263,8 @@ func (h *KnowledgeHandler) BatchDeleteKnowledge(c *gin.Context) {
 		if k.KnowledgeBaseID != kbID {
 			c.Error(errors.NewBadRequestError(
 				fmt.Sprintf("Knowledge %s does not belong to knowledge base %s",
-					secutils.SanitizeForLog(k.ID), secutils.SanitizeForLog(kbID))))
+					secutils.SanitizeForLog(k.ID), secutils.SanitizeForLog(kbID)),
+			))
 			return
 		}
 	}
@@ -2324,7 +2303,8 @@ func (h *KnowledgeHandler) MoveKnowledge(c *gin.Context) {
 	if req.Mode == "reuse_vectors" && !sourceKB.SharesStoreWith(targetKB) {
 		c.Error(errors.NewBadRequestError(
 			"reuse_vectors move across different vector stores is not supported; " +
-				"use reparse mode to move into a different store"))
+				"use reparse mode to move into a different store",
+		))
 		return
 	}
 
@@ -2593,7 +2573,8 @@ func (h *KnowledgeHandler) BatchReparseKnowledge(c *gin.Context) {
 		if k.KnowledgeBaseID != kbID {
 			c.Error(errors.NewBadRequestError(
 				fmt.Sprintf("Knowledge %s does not belong to knowledge base %s",
-					secutils.SanitizeForLog(k.ID), secutils.SanitizeForLog(kbID))))
+					secutils.SanitizeForLog(k.ID), secutils.SanitizeForLog(kbID)),
+			))
 			return
 		}
 	}

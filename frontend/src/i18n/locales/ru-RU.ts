@@ -609,7 +609,6 @@ export default {
     dragFileNotText: 'Пожалуйста, перетащите файлы, а не текст или ссылки',
     searchPlaceholder: 'Поиск по базам знаний...',
     docSearchPlaceholder: 'Поиск документов...',
-    searchInFolder: 'Искать в этой папке',
     folderPath: 'Папка',
     fileTypeFilter: 'Тип файла',
     allFileTypes: 'Все типы',

@@ -323,7 +323,6 @@ export function listKnowledgeFiles(
     start_time?: string;
     end_time?: string;
     folder_id?: string;
-    folder_scope?: string;
   },
 ) {
   const query = new URLSearchParams();
@@ -337,7 +336,6 @@ export function listKnowledgeFiles(
   if (params.start_time) query.append('start_time', params.start_time);
   if (params.end_time) query.append('end_time', params.end_time);
   if (params.folder_id) query.append('folder_id', params.folder_id);
-  if (params.folder_scope) query.append('folder_scope', params.folder_scope);
   const qs = query.toString();
   return get(`/api/v1/knowledge-bases/${kbId}/knowledge?${qs}`);
 }
