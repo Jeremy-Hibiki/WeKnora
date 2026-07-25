@@ -256,6 +256,9 @@ func TestConnector_FetchAll(t *testing.T) {
 	assert.Contains(t, items[0].Metadata, "channel")
 	assert.Equal(t, types.ChannelSVN, items[0].Metadata["channel"])
 	assert.Equal(t, "https://svn.example.com/repo/docs/readme.md", items[0].URL)
+	// Folder hierarchy reconstructed from the file path under the synced node.
+	assert.Equal(t, "docs", items[0].FolderPath)
+	assert.Equal(t, "docs/guide", items[1].FolderPath)
 }
 
 func TestConnector_FetchAll_PartialError(t *testing.T) {
@@ -454,6 +457,18 @@ func TestConnector_FetchIncremental_WithDiffs(t *testing.T) {
 	require.Len(t, deletedItems, 1)
 	assert.Equal(t, "/docs/gone.md", deletedItems[0].ExternalID)
 
+	// Added/Modified items carry the reconstructed folder path.
+	var contentItems []types.FetchedItem
+	for _, item := range items {
+		if !item.IsDeleted {
+			contentItems = append(contentItems, item)
+		}
+	}
+	require.Len(t, contentItems, 2)
+	for _, ci := range contentItems {
+		assert.Equal(t, "docs", ci.FolderPath)
+	}
+
 	assert.Equal(t, int64(105), newCursor.ConnectorCursor["last_revision"])
 }
 
@@ -485,6 +500,30 @@ func TestBuildFilePath(t *testing.T) {
 	assert.Equal(t, "/docs/sub/intro.md", buildFilePath("/docs", "sub/intro.md"))
 	assert.Equal(t, "/readme.md", buildFilePath("/", "readme.md"))
 	assert.Equal(t, "/readme.md", buildFilePath("", "readme.md"))
+}
+
+func TestSVNFolderPath(t *testing.T) {
+	tests := []struct {
+		name     string
+		filePath string
+		want     string
+	}{
+		{"root file with leading slash", "/readme.md", ""},
+		{"root file without leading slash", "readme.md", ""},
+		{"single directory", "/docs/readme.md", "docs"},
+		{"nested directories", "/docs/api/readme.md", "docs/api"},
+		{"trunk prefix preserved", "/trunk/docs/api/readme.md", "trunk/docs/api"},
+		{"empty path", "", ""},
+		{"just a slash", "/", ""},
+		{"collapses double slashes", "/docs//api/readme.md", "docs/api"},
+		{"resolves parent segments", "/docs/../api/readme.md", "api"},
+		{"filename only no dir", "/.hidden", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, svnFolderPath(tt.filePath))
+		})
+	}
 }
 
 func TestBuildCursor(t *testing.T) {

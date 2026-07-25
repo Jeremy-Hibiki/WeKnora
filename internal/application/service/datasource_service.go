@@ -32,6 +32,7 @@ type DataSourceService struct {
 	scheduler         *datasource.Scheduler
 	tenantRepo        interfaces.TenantRepository
 	tagService        interfaces.KnowledgeTagService
+	folderService     interfaces.KnowledgeFolderService
 	audit             interfaces.AuditLogService
 }
 
@@ -46,6 +47,7 @@ func NewDataSourceService(
 	scheduler *datasource.Scheduler,
 	tenantRepo interfaces.TenantRepository,
 	tagService interfaces.KnowledgeTagService,
+	folderService interfaces.KnowledgeFolderService,
 	audit interfaces.AuditLogService,
 ) interfaces.DataSourceService {
 	return &DataSourceService{
@@ -58,6 +60,7 @@ func NewDataSourceService(
 		scheduler:         scheduler,
 		tenantRepo:        tenantRepo,
 		tagService:        tagService,
+		folderService:     folderService,
 		audit:             audit,
 	}
 }
@@ -1175,6 +1178,21 @@ func (s *DataSourceService) ingestItem(ctx context.Context, ds *types.DataSource
 		}
 	}
 
+	// File-oriented connectors (e.g. SVN) carry a relative directory path so the
+	// source folder hierarchy is rebuilt inside the knowledge base. An empty or
+	// missing path leaves the item at the KB root. Failures here (e.g. exceeding
+	// the max folder depth) degrade to the root with a warning rather than
+	// aborting the whole sync round for a single file.
+	var folderID *string
+	if dir := strings.TrimSpace(item.FolderPath); dir != "" {
+		leaf, ferr := s.folderService.EnsureFolderPath(ctx, ds.KnowledgeBaseID, nil, dir)
+		if ferr != nil {
+			logger.Warnf(ctx, "datasource: ensure folder path %q failed, falling back to root: %v", dir, ferr)
+		} else if leaf != nil {
+			folderID = &leaf.ID
+		}
+	}
+
 	// Case 1: content already fetched → build a FileHeader from bytes and call CreateKnowledgeFromFile
 	if len(item.Content) > 0 {
 		fh, err := bytesToFileHeader(item.Content, item.FileName)
@@ -1191,7 +1209,7 @@ func (s *DataSourceService) ingestItem(ctx context.Context, ds *types.DataSource
 			tagIDs,        // auto-tag from data source
 			channel,
 			nil,
-			nil, // folderID
+			folderID, // reconstructed folder (nil = KB root)
 		)
 		return isUpdate, err
 	}
@@ -1209,7 +1227,7 @@ func (s *DataSourceService) ingestItem(ctx context.Context, ds *types.DataSource
 			tagIDs, // auto-tag from data source
 			channel,
 			nil,
-			nil, // folderID
+			folderID, // reconstructed folder (nil = KB root)
 		)
 		return isUpdate, err
 	}
