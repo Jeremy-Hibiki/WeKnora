@@ -622,11 +622,23 @@ const folderDialogMode = ref<'create' | 'edit'>('create');
 const currentEditFolder = ref<KnowledgeFolder | null>(null);
 
 // Load folders when kbId or currentFolderId changes
-watch([kbId, currentFolderId], ([newKbId, newFolderId]) => {
-  if (newKbId) {
-    loadFolders(newFolderId);
-    loadFolderTree();
+watch([kbId, currentFolderId], ([newKbId, newFolderId], [oldKbId]) => {
+  if (!newKbId) return;
+  if (oldKbId && newKbId !== oldKbId) {
+    // Switching KBs: the previous KB's folder id is meaningless in the new
+    // one (folders are KB-scoped). Reset to the root before any folder-
+    // scoped query or upload runs, otherwise the new KB shows no content
+    // and uploads would be filed under a stale folder id.
+    if (currentFolderId.value) {
+      currentFolderId.value = null;
+    } else {
+      loadFolders(null);
+      loadFolderTree();
+    }
+    return;
   }
+  loadFolders(newFolderId);
+  loadFolderTree();
 }, { immediate: true });
 
 // Reload files when folder changes. The 'search in this folder' toggle is
