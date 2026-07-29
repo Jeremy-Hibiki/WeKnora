@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"path"
 	"path/filepath"
 	"regexp"
@@ -80,6 +81,13 @@ func (c *Connector) ListResources(
 		return nil, fmt.Errorf("list %q: %w", parentID, err)
 	}
 
+	// Normalize parentID the same way entryPath is built below, so a child's
+	// ParentID always equals its parent's ExternalID exactly ("" for root).
+	normalizedParentID := ""
+	if parentID != "" {
+		normalizedParentID = "/" + strings.Trim(parentID, "/")
+	}
+
 	resources := make([]types.Resource, 0, len(entries))
 	for _, e := range entries {
 		entryPath := e.Name
@@ -91,6 +99,7 @@ func (c *Connector) ListResources(
 		isDir := e.Kind == "dir"
 		resources = append(resources, types.Resource{
 			ExternalID:  entryPath,
+			ParentID:    normalizedParentID,
 			Name:        e.Name,
 			Type:        e.Kind,
 			URL:         joinURLPath(cfg.RepoURL, entryPath),
@@ -474,6 +483,11 @@ func buildFetchedItem(filePath string, content []byte, entry listEntry, resID, r
 // be relative to the repo root or an absolute URL) to a clean repo-relative path.
 func normalizeDiffPath(diffPath, repoRoot, repoURL string) string {
 	p := strings.TrimSpace(diffPath)
+	// SVN diff --summarize --xml encodes paths as percent-encoded URLs.
+	// Decode to UTF-8 before any processing; on failure preserve the raw string.
+	if unescaped, err := url.PathUnescape(p); err == nil {
+		p = unescaped
+	}
 	// svn diff --summarize returns paths as full repository URLs or
 	// repo-root-relative paths. Strip the repo root/URL prefix to obtain a
 	// clean repo-relative path.

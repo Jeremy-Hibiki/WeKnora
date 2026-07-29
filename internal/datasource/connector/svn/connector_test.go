@@ -212,8 +212,10 @@ func TestConnector_ListResources_Root(t *testing.T) {
 
 	require.Len(t, resources, 2)
 	assert.Equal(t, "/docs", resources[0].ExternalID)
+	assert.Equal(t, "", resources[0].ParentID)
 	assert.True(t, resources[0].HasChildren)
 	assert.Equal(t, "/readme.md", resources[1].ExternalID)
+	assert.Equal(t, "", resources[1].ParentID)
 	assert.False(t, resources[1].HasChildren)
 }
 
@@ -230,6 +232,7 @@ func TestConnector_ListResources_Subdirectory(t *testing.T) {
 
 	require.Len(t, resources, 1)
 	assert.Equal(t, "/docs/architecture", resources[0].ExternalID)
+	assert.Equal(t, "/docs", resources[0].ParentID)
 }
 
 func TestConnector_FetchAll(t *testing.T) {
@@ -486,6 +489,13 @@ func TestNormalizeDiffPath(t *testing.T) {
 		{"leading slash", "/docs/new.md", "/docs/new.md"},
 		{"root only", "", "/"},
 		{"whitespace", "  docs/new.md  ", "/docs/new.md"},
+		// Chinese path percent-encoded — the core bug scenario.
+		{"chinese percent-encoded", "/%E9%85%8D%E7%BD%AE%E9%94%99%E8%AF%AF/config.md", "/配置错误/config.md"},
+		{"chinese directory relative", "%E6%96%87%E6%A1%A3/readme.md", "/文档/readme.md"},
+		{"chinese nested dirs", "/%E6%B5%8B%E8%AF%95/%E6%96%87%E4%BB%B6/test.md", "/测试/文件/test.md"},
+		// Already-decoded UTF-8 — round-trip must preserve original.
+		{"utf-8 no-op", "/配置错误/config.md", "/配置错误/config.md"},
+		{"utf-8 nested", "/测试/文件/test.md", "/测试/文件/test.md"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
