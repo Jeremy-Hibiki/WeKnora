@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"path"
 	"path/filepath"
 	"regexp"
@@ -482,6 +483,11 @@ func buildFetchedItem(filePath string, content []byte, entry listEntry, resID, r
 // be relative to the repo root or an absolute URL) to a clean repo-relative path.
 func normalizeDiffPath(diffPath, repoRoot, repoURL string) string {
 	p := strings.TrimSpace(diffPath)
+	// SVN diff --summarize --xml encodes paths as percent-encoded URLs.
+	// Decode to UTF-8 before any processing; on failure preserve the raw string.
+	if unescaped, err := url.PathUnescape(p); err == nil {
+		p = unescaped
+	}
 	// svn diff --summarize returns paths as full repository URLs or
 	// repo-root-relative paths. Strip the repo root/URL prefix to obtain a
 	// clean repo-relative path.

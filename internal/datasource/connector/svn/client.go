@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -263,18 +264,32 @@ func (c *cliImpl) DiffSummarize(ctx context.Context, repoURL, path string, oldRe
 		return nil, fmt.Errorf("parse svn diff xml: %w", err)
 	}
 
-	entries := make([]diffEntry, 0, len(summary.Paths))
-	for _, p := range summary.Paths {
+	return parseDiffSummarizeEntries(summary.Paths), nil
+}
+
+// parseDiffSummarizeEntries converts diff XML path entries to internal diffEntry.
+// SVN diff --summarize --xml encodes paths as percent-encoded URLs; this function
+// decodes them to UTF-8. It is a pure function — no SVN subprocess needed — so it
+// can be unit-tested in isolation.
+func parseDiffSummarizeEntries(paths []diffPath) []diffEntry {
+	entries := make([]diffEntry, 0, len(paths))
+	for _, p := range paths {
 		changeType := itemToChangeType(p.Item)
 		if changeType == "" {
 			continue
 		}
+		path := strings.TrimSpace(p.Path)
+		// SVN diff --summarize --xml encodes paths as percent-encoded URLs.
+		// Decode to UTF-8; on failure fall back to the raw string.
+		if unescaped, err := url.PathUnescape(path); err == nil {
+			path = unescaped
+		}
 		entries = append(entries, diffEntry{
-			Path: strings.TrimSpace(p.Path),
+			Path: path,
 			Type: changeType,
 		})
 	}
-	return entries, nil
+	return entries
 }
 
 // itemToChangeType converts SVN's item attribute to our internal A/M/D type.
